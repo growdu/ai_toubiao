@@ -1,0 +1,19 @@
+{
+  "name": "ai-toubiao-docs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI 标书自动生成系统 — 设计文档仓库的本地开发工具（mermaid 校验等）。",
+  "type": "module",
+  "scripts": {
+    "lint:mermaid": "node tools/mermaid-lint.mjs '**/*.md'",
+    "lint:md": "markdownlint-cli2 '**/*.md'"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "^0.18.1",
+    "mermaid": "^10.9.2",
+    "puppeteer-core": "^23.11.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
