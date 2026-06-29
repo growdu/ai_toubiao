@@ -1,35 +1,32 @@
-# ai_toubiao
+# ai_toubiao · AI 标书自动生成系统
 
-投标工具箱（OpenBidKit / 易标）相关独立工作仓库。
+> 本仓库承载 **AI 标书自动生成系统** 的产品调研、需求分析与设计文档。
+> 不包含代码实现 —— 代码位于 `OpenBidKit_Yibiao`（Electron 客户端）与 `bidwriter`（Go 后端）。
 
-## 目录结构
+## 文档索引
 
-  configs/
-    routes-smoke.yaml          # router-svc 的 mock 模式 routes 文件（不含真 provider key）
-  scripts/
-    router-svc-smoke.mjs       # 19 个测试（15 单元 + 4 live 端到端）
-  docs/
-    ROUTER_SVC_INTEGRATION.md  # 协议、mapping、启动、测试、配置示例
-    router-integration.patch.diff  # 集成 OpenBidKit_Yibiao 客户端的 patch
+| 文档 | 内容 |
+|---|---|
+| [docs/diaoyan.md](docs/diaoyan.md) | 调研：行业现状、痛点、机会、目标用户 |
+| [docs/framework.md](docs/framework.md) | 设计纲要：系统目标、核心三要素（AI/章节任务/图表）、状态机、人在回路点 |
+| [docs/tech-selection.md](docs/tech-selection.md) | 技术选型：FastAPI + Celery + PostgreSQL + Redis + 多 LLM provider + Mermaid |
+| [docs/high-level-design.md](docs/high-level-design.md) | 概要设计（HLD）：组件架构、核心流程、数据模型、接口、可观测、安全、部署 |
 
-## 这是什么
+## 关联仓库
 
-本仓库承载的是 **OpenBidKit_Yibiao Electron 客户端 ↔ bidwriter Go router-svc** 集成的独立可移植产物。完整的代码修改在 OpenBidKit_Yibiao 仓库的 commit `44f7f7d`，本仓库只放那些**可以脱离 OpenBidKit 仓库独立使用**的东西：
+- **OpenBidKit_Yibiao**（Electron 客户端）：`/work/ai/OpenBidKit_Yibiao`
+- **bidwriter**（Go 后端）：`/work/ai/bidwriter`
 
-- `configs/routes-smoke.yaml` —— mock 模式路由表，注入到 router-svc 后可以做端到端联调（不消耗真 LLM 配额）
-- `scripts/router-svc-smoke.mjs` —— 不依赖 Electron 环境，跑 `node` 就能验证客户端/服务端协议是否符合预期
-- `docs/router-integration.patch.diff` —— 完整 patch（350+ 行），用来把集成改回 OpenBidKit_Yibiao 的一个干净 checkout
-- `docs/ROUTER_SVC_INTEGRATION.md` —— 协议、配置、跑测试的完整指南
+## CI
 
-## 快速验证
+| 检查 | 工具 | 严格度 |
+|---|---|---|
+| 必需文件存在且非空 | shell | 严格（CI 红） |
+| Markdown 风格 | markdownlint-cli2 | 严格（CI 红） |
+| 链接检查 | lychee | 宽松（仅 Job Summary） |
 
-  # 单元测试（不需要任何后端）
-  node scripts/router-svc-smoke.mjs
+工作流：`.github/workflows/ci.yml`，对 `push` 到 `main` 与所有 `pull_request` 触发。
 
-  # 端到端（先启 router-svc，参考 docs/ROUTER_SVC_INTEGRATION.md）
-  node scripts/router-svc-smoke.mjs --live http://127.0.0.1:8085
+## License
 
-## 关联项目
-
-- **OpenBidKit_Yibiao**（Electron 客户端）：`/work/ai/OpenBidKit_Yibiao`，commit `44f7f7d`
-- **bidwriter**（Go 后端，含 router-svc）：`/work/ai/bidwriter`
+Private · 仅供内部使用
