@@ -12,6 +12,7 @@ Thumbs.db
 node_modules/
 dist/
 build/
+site/         # mkdocs build 输出
 *.log
 npm-debug.log*
 

@@ -81,12 +81,56 @@ jobs:
           jobSummary: true
 
   # ───────────────────────────────────────────────────────────
+  # Mermaid 渲染校验：用 mermaid.js + Chrome 真实渲染所有
+  # ```mermaid 代码块，确保语法合法、GitHub 能正常显示。
+  # ───────────────────────────────────────────────────────────
+  mermaid-lint:
+    name: Mermaid lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Render mermaid blocks
+        run: node tools/mermaid-lint.mjs
+
+  # ───────────────────────────────────────────────────────────
+  # MkDocs 严格构建校验：与 pages.yml 同一配置，确保本地能
+  # 严格构建；警告视为失败（strict mode）。
+  # ───────────────────────────────────────────────────────────
+  mkdocs-build:
+    name: MkDocs strict build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install mkdocs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: mkdocs build --strict
+        run: mkdocs build --strict --clean
+
+  # ───────────────────────────────────────────────────────────
   # 总状态：所有必须任务通过才算成功
   # ───────────────────────────────────────────────────────────
   ci-success:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [structure, markdown-lint]
+    needs: [structure, markdown-lint, mermaid-lint, mkdocs-build]
     if: always()
     steps:
       - name: Check required jobs passed
@@ -97,6 +141,14 @@ jobs:
           fi
           if [[ "${{ needs.markdown-lint.result }}" != "success" ]]; then
             echo "::error::markdown-lint job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.mermaid-lint.result }}" != "success" ]]; then
+            echo "::error::mermaid-lint job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.mkdocs-build.result }}" != "success" ]]; then
+            echo "::error::mkdocs-build job failed"
             exit 1
           fi
           echo "All required CI checks passed."
