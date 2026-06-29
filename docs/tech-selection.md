@@ -362,6 +362,74 @@ async def render_mermaid(source: str) -> bytes:
 - 失败时降级到 Replicate 上的其他模型
 - 国产模型作为中文场景补充
 
+### 6.2.1 DALL-E 3 vs FLUX / Stable Diffusion 深度对比（需求 §3.7.6 + D3）
+
+> 需求 §3.7.6 要求"文生图补充方案"，依赖 D3 列出 FLUX / SD。本节对三类模型做系统对比，给出选型矩阵。
+
+| 维度 | DALL-E 3 | Stable Diffusion 3 / 3.5 | FLUX.1 [pro/dev/schnell] |
+|---|---|---|---|
+| **提供方** | OpenAI（API） | Stability AI / 社区 | Black Forest Labs |
+| **接入方式** | 云端 API | 本地 / Replicate | 云端 API 或本地 |
+| **质量** | 高（写实风） | 中-高（写实偏弱） | 极高（写实+艺术） |
+| **风格可控性** | ★★★★ | ★★★ | ★★★★★ |
+| **中文支持** | 良好（prompt 英文效果更好） | 取决于底模 | 良好 |
+| **分辨率** | 1024×1024 / 1792×1024 | 可自定义（512-2048） | 可自定义（1024+） |
+| **生成速度** | 5-10s | 10-30s（GPU） | 10-20s（GPU） |
+| **成本** | $0.04/张 | GPU 电费（≈$0.005/张） | API $0.05/张 或本地 |
+| **私有化** | ❌ 仅 API | ✅ 本地部署 | ✅ 本地部署 |
+| **数据合规** | 数据回流 OpenAI | 本地无回流 | 本地无回流 |
+| **风格模板** | 通过 prompt 实现 | LoRA / ControlNet | LoRA / ControlNet |
+| **版权风险** | 商业可用（OpenAI 条款） | 模型许可证（SD3.5 商业可用） | 商业可用 |
+
+**选型矩阵（按场景）**：
+
+| 场景 | 推荐 | 理由 |
+|---|---|---|
+| **SaaS 模式 + 高质量** | DALL-E 3 主、FLUX API 备 | 质量稳定、API 简单、降级有 |
+| **SaaS 模式 + 成本敏感** | SD 3.5 + Replicate | $0.005/张，成本降 8x |
+| **私有化模式** | SD 3.5 本地 + FLUX 本地 | 无外网，必须本地推理 |
+| **中文场景** | 通义万相 + Qwen 文生图 | 中文 prompt 友好 |
+| **风格统一** | SD 3.5 + 训练 LoRA | LoRA 锁定企业风格 |
+| **封面图** | FLUX.1 pro | 写实 + 艺术质量最高 |
+| **示意图（架构 / 组织）** | Mermaid 优先 | 矢量、可编辑、零成本 |
+
+**推荐最终方案**：
+
+| 部署模式 | 主力 | 备选 | 兜底 |
+|---|---|---|---|
+| **SaaS 模式** | DALL-E 3（云端 API） | FLUX.1 [schnell]（Replicate） | 简化 prompt 重试 → 占位图 |
+| **私有化模式** | SD 3.5（本地 + LoRA） | FLUX.1 [dev]（本地） | 简化 prompt → 占位图 |
+
+**LoRA 风格锁定**（私有化推荐做法）：
+```python
+# 训练企业专属 LoRA
+lora_config = {
+    "base_model": "stabilityai/stable-diffusion-3.5-large",
+    "lora_rank": 32,
+    "training_data": "企业历史标书封面 200 张 + 行业模板 100 张",
+    "training_steps": 5000,
+    "output": "models/lora/enterprise_style_v1.safetensors",
+}
+
+# 推理时挂载
+pipe.load_lora_weights("models/lora/enterprise_style_v1.safetensors")
+image = pipe(prompt=prompt, lora_scale=0.8).images[0]
+```
+
+**风格一致性保证**（跨标书）：
+- SaaS：DALL-E 3 用统一 style prefix（"professional Chinese government bid cover, blue corporate style, vector illustration style"）
+- 私有化：LoRA 锁定 + 固定 seed + 负向 prompt（"low quality, watermark, text"）
+
+**性能与成本**（单标书约 30 张 AI 图）：
+
+| 方案 | 单图成本 | 单标书总成本 | 单图延迟 |
+|---|---|---|---|
+| DALL-E 3 | $0.04 | $1.2 | 5-10s |
+| SD 3.5（本地） | GPU 电费 $0.005 | $0.15 | 10-20s |
+| FLUX schnell（API） | $0.05 | $1.5 | 8-12s |
+
+---
+
 ## 6.3 表格 / 响应矩阵
 
 直接生成 HTML / JSON，自实现 HTML → docx 表格，无需第三方。
@@ -511,6 +579,205 @@ framework.md 提出"你不需要 RAG"哲学，技术实现：
 
 理由：标书场景召回率 > 相似度，目录树 + 关键词足够。
 
+### 8.1.1 双向语义索引（需求 §4.9-② + HLD §5.10）
+
+> 需求 §4.9-② 要求"文-图双向语义索引"——通过文本检索图表、通过图表反查相关正文段落。MVP 用 PostgreSQL tsvector 是不够的，必须升级到混合检索。
+
+**向量库选型**：
+
+| 方案 | 性能 | 运维 | 适用 |
+|---|---|---|---|
+| **pgvector** | 百万级 OK | 零运维（复用 PG） | **MVP 推荐** |
+| Qdrant | 亿级 | 独立服务 | 规模化 |
+| Milvus | 亿级 | 独立集群 | 超大规模 |
+| Weaviate | 千万级 | 中等 | 通用场景 |
+| Chroma | 百万级 | 轻量 | 本地原型 |
+
+**推荐：pgvector（MVP）+ Qdrant（规模化）**
+
+理由：
+- 标书知识库单企业规模 10K-100K 文档，pgvector 完全够用
+- 复用 PostgreSQL 主备/备份/快照，省一套独立服务
+- 迁移路径平滑：pgvector → Qdrant 仅需换客户端，schema 几乎不变
+
+**Embedding 模型**：
+
+| 模型 | 维度 | 性能 | 适用 |
+|---|---|---|---|
+| **BGE-large-zh-v1.5** | 1024 | 中文 SOTA | **推荐（中文场景）** |
+| BGE-M3 | 1024 | 多语言 + 长文本（8K） | 长文档 |
+| M3E-large | 1024 | 中文 | 备选 |
+| text-embedding-3-large（OpenAI） | 3072 | 通用 | 私有化不可用 |
+| Qwen3-Embedding | 1024+ | 中文 + 多语言 | 备选（国产） |
+
+**私有化部署**：BGE-large-zh-v1.5 + vLLM 推理，1× GPU 16G 即可。
+
+**双向索引的数据模型**：
+
+```sql
+-- 1. 文本侧指纹（每段正文 + 章节标题）
+CREATE TABLE text_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    doc_id BIGINT NOT NULL,
+    doc_type VARCHAR(32),          -- 'chapter' | 'requirement' | 'evidence' | 'scoring_item'
+    chapter_id VARCHAR(64),
+    content TEXT NOT NULL,
+    content_tsv TSVECTOR,          -- tsvector（全文索引）
+    content_vec VECTOR(1024),      -- pgvector（语义索引）
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_text_tsv ON text_chunks USING GIN(content_tsv);
+CREATE INDEX idx_text_vec ON text_chunks USING ivfflat(content_vec vector_cosine_ops) WITH (lists = 100);
+
+-- 2. 图表侧指纹（图题 + 描述 + caption）
+CREATE TABLE figure_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    figure_id BIGINT NOT NULL,
+    chapter_id VARCHAR(64),
+    caption TEXT,                  -- 图表标题
+    description TEXT,              -- 图表描述/正文片段
+    caption_tsv TSVECTOR,
+    caption_vec VECTOR(1024),
+    image_hash VARCHAR(64),        -- 视觉指纹（pHash）
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_figure_tsv ON figure_chunks USING GIN(caption_tsv);
+CREATE INDEX idx_figure_vec ON figure_chunks USING ivfflat(caption_vec vector_cosine_ops) WITH (lists = 100);
+
+-- 3. 正向关系（章节 → 图表）+ 反向关系（图表 → 章节）
+CREATE TABLE chunk_figure_links (
+    text_chunk_id BIGINT REFERENCES text_chunks(id),
+    figure_chunk_id BIGINT REFERENCES figure_chunks(id),
+    link_type VARCHAR(32),         -- 'contains' | 'describes' | 'evidence_for' | 'derived_from'
+    similarity_score FLOAT,        -- 双向索引的相似度
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (text_chunk_id, figure_chunk_id)
+);
+```
+
+**混合检索实现**：
+
+```python
+async def hybrid_search(
+    query: str,
+    top_k: int = 10,
+    text_weight: float = 0.5,
+    vec_weight: float = 0.5,
+) -> list[SearchResult]:
+    # 1. 关键词检索（tsvector）
+    keyword_results = await db.execute("""
+        SELECT id, content, ts_rank_cd(content_tsv, query) AS score
+        FROM text_chunks, plainto_tsquery('simple', $1) query
+        WHERE content_tsv @@ query
+        ORDER BY score DESC LIMIT $2 * 3
+    """, query, top_k)
+    
+    # 2. 语义检索（pgvector）
+    query_vec = await embed(query)  # BGE-large-zh
+    semantic_results = await db.execute("""
+        SELECT id, content, 1 - (content_vec <=> $1) AS score
+        FROM text_chunks
+        ORDER BY content_vec <=> $1
+        LIMIT $2 * 3
+    """, query_vec, top_k)
+    
+    # 3. 倒数排名融合（RRF）
+    fused = reciprocal_rank_fusion(
+        [keyword_results, semantic_results],
+        weights=[text_weight, vec_weight]
+    )
+    return fused[:top_k]
+```
+
+**双向查询示例**：
+
+```python
+# 查询 1: 文本 → 相关图表（图题检索）
+async def find_related_figures(text_chunk_id: int, top_k: int = 5):
+    return await db.execute("""
+        SELECT f.*, l.similarity_score
+        FROM chunk_figure_links l
+        JOIN figure_chunks f ON l.figure_chunk_id = f.id
+        WHERE l.text_chunk_id = $1
+        ORDER BY l.similarity_score DESC
+        LIMIT $2
+    """, text_chunk_id, top_k)
+
+# 查询 2: 图表 → 相关正文（图反查文）
+async def find_related_text(figure_id: int, top_k: int = 5):
+    return await db.execute("""
+        SELECT t.*, l.similarity_score
+        FROM chunk_figure_links l
+        JOIN text_chunks t ON l.text_chunk_id = t.id
+        WHERE l.figure_chunk_id = $1
+        ORDER BY l.similarity_score DESC
+        LIMIT $2
+    """, figure_id, top_k)
+
+# 查询 3: 跨模态（用图查图、用文查文）
+async def cross_modal_search(figure_id: int, top_k: int = 5):
+    """给一张图，找语义最相关的 5 张其他图"""
+    return await db.execute("""
+        WITH anchor AS (SELECT caption_vec FROM figure_chunks WHERE id = $1)
+        SELECT id, caption, 1 - (caption_vec <=> (SELECT caption_vec FROM anchor)) AS score
+        FROM figure_chunks
+        WHERE id != $1
+        ORDER BY caption_vec <=> (SELECT caption_vec FROM anchor)
+        LIMIT $2
+    """, figure_id, top_k)
+```
+
+**索引构建流程**：
+
+```python
+# 文档入库时双写
+async def index_chapter(chapter_id: str, content: str):
+    chunks = split_into_chunks(content, chunk_size=512, overlap=64)
+    for chunk in chunks:
+        # 写入正文指纹
+        await db.execute("""
+            INSERT INTO text_chunks (doc_id, doc_type, chapter_id, content, content_tsv, content_vec)
+            VALUES ($1, 'chapter', $2, $3, to_tsvector('simple', $3), $4)
+        """, chapter_id, chapter_id, chunk.text, await embed(chunk.text))
+        
+        # 解析并关联图表占位符
+        figures = extract_figure_placeholders(chunk.text)
+        for fig in figures:
+            fig_id = await upsert_figure(fig)
+            # 写入图表指纹
+            await db.execute("""
+                INSERT INTO figure_chunks (figure_id, chapter_id, caption, description, caption_tsv, caption_vec)
+                VALUES ($1, $2, $3, $4, to_tsvector('simple', $3), $5)
+                ON CONFLICT (figure_id) DO UPDATE SET caption_vec = $5
+            """, fig_id, chapter_id, fig.caption, chunk.text, await embed(fig.caption))
+            
+            # 关联
+            await db.execute("""
+                INSERT INTO chunk_figure_links (text_chunk_id, figure_chunk_id, link_type, similarity_score)
+                VALUES ($1, $2, 'describes', $3)
+                ON CONFLICT DO NOTHING
+            """, chunk.id, fig_id, cosine_similarity(chunk.vec, fig.vec))
+```
+
+**性能指标**（10 万条文本 + 5 万张图）：
+
+| 操作 | 延迟 | 备注 |
+|---|---|---|
+| 单次混合检索 | < 100ms | 关键词 + 向量并行 |
+| 文本→图表查询 | < 50ms | 索引命中 |
+| 图表→文本查询 | < 50ms | 索引命中 |
+| 跨模态查询 | < 200ms | 纯向量 |
+| 入库（每 chunk） | < 80ms | 含 embedding |
+
+**成本**（私有化部署）：
+- Embedding 推理：1× A100 16G，500 chunks/秒
+- pgvector 内存：100K × 1024 × 4B = 400MB
+- 索引构建：首次全量 ~30 分钟，增量 < 5 分钟
+
 ## 8.2 文档预处理
 
 ```python
@@ -529,6 +796,134 @@ async def ingest_document(path: str) -> Document:
         metadata=extract_metadata(path)
     )
 ```
+
+## 8.3 行业适配策略（需求 §4.9-④ + HLD §5.12）
+
+> 需求 §4.9-④ 要求"行业适配深度（聚焦 2-3 个行业）"。MVP 阶段我们聚焦以下 3 个行业，提供差异化模板与领域词典。
+
+### 8.3.1 聚焦行业
+
+**行业优先级**（按招标频次 + 单项目金额）：
+
+| 行业 | 招标频次 | 平均金额 | 模板成熟度 | MVP 优先级 |
+|---|---|---|---|---|
+| **信息技术（软件开发 / 集成）** | 极高 | 中-高 | 高 | **P0** |
+| **建筑工程（房建 / 市政）** | 极高 | 高 | 中 | **P0** |
+| **政府采购（货物 / 服务）** | 高 | 中 | 高 | **P1** |
+| **能源（电力 / 化工）** | 中 | 高 | 低 | P2 |
+| **医疗（设备 / 信息化）** | 中 | 中 | 中 | P2 |
+| **金融（系统 / 数据）** | 中 | 高 | 低 | P2 |
+
+**MVP 重点**：信息技术 + 建筑工程 + 政府采购
+
+### 8.3.2 行业模板
+
+每个行业提供独立的：
+- 章节模板（章节类型 + 推荐顺序）
+- 评分项映射规则
+- 资质门槛清单
+- 常见图表类型
+- 行业术语词典
+
+```yaml
+# config/industry/it.yaml
+industry: it
+display_name: "信息技术"
+chapter_templates:
+  - type: "技术方案"
+    sections: ["系统架构", "技术选型", "接口设计", "性能指标", "安全方案", "部署方案"]
+    weight: 0.40          # 占总分 40%
+  - type: "实施方案"
+    sections: ["项目组织", "实施计划", "培训方案", "运维方案"]
+    weight: 0.20
+  - type: "商务方案"
+    sections: ["公司简介", "资质证书", "类似业绩", "报价说明"]
+    weight: 0.30
+  - type: "售后方案"
+    sections: ["质保期", "响应时间", "服务团队"]
+    weight: 0.10
+qualifications:
+  - "ISO 9001 质量管理体系认证"
+  - "CMMI 3 级（或以上）认证"
+  - "软件企业认定证书"
+  - "近 3 年同类项目业绩（≥3 个）"
+common_figures:
+  - "系统架构图"
+  - "网络拓扑图"
+  - "数据流程图"
+  - "ER 图"
+  - "接口时序图"
+```
+
+### 8.3.3 领域词典
+
+**作用**：让 Embedding 和关键词检索更精准，理解行业黑话。
+
+```yaml
+# config/industry/it_terms.yaml
+synonyms:
+  - "中间件" -> ["消息队列", "MQ", "Kafka", "RabbitMQ", "RocketMQ"]
+  - "数据库" -> ["MySQL", "PostgreSQL", "Oracle", "达梦", "人大金仓"]
+  - "云服务" -> ["阿里云", "华为云", "腾讯云", "AWS", "Azure"]
+  - "等保" -> ["等级保护", "等保2.0", "等保三级", "等保2.0三级"]
+  - "信创" -> ["国产化", "自主可控", "国产芯片", "麒麟", "统信"]
+  - "CMMI" -> ["CMMI 3", "CMMI 4", "CMMI 5", "能力成熟度"]
+  - "DevOps" -> ["CI/CD", "持续集成", "持续部署", "Jenkins", "GitLab CI"]
+
+stopwords:
+  - "本项目"
+  - "本公司"
+  - "投标人"
+
+entity_types:
+  PRODUCT: ["系统", "平台", "软件", "中间件", "数据库"]
+  STANDARD: ["等保三级", "CMMI 3", "ISO 9001", "ISO 27001"]
+  CERT: ["软件著作权", "专利", "软件企业认定", "高新技术企业"]
+```
+
+### 8.3.4 行业适配的实施路径
+
+**MVP 阶段**（M0-M3）：
+1. 落地信息技术 + 建筑工程 + 政府采购 3 个行业的 YAML 模板
+2. 准备 3 套行业词典（BGE embedding 微调或拼接到 prompt）
+3. 准备 3 套行业评分项映射规则
+4. 准备 100+ 个行业模板标书样本（用于评测）
+
+**v1.0 阶段**（M3-M6）：
+1. 加入能源 / 医疗 2 个行业
+2. 行业词典自动学习（从历史标书抽取）
+3. 行业级微调 LLM（针对 Top 2 行业）
+
+**v2.0 阶段**（M6+）：
+1. 行业知识图谱（招标方-行业-业绩-人员多维关系）
+2. 行业级 LoRA（每个行业一个 LoRA）
+3. 客户自定义行业（上传历史标书自动学习）
+
+### 8.3.5 行业识别
+
+**自动识别流程**：
+
+```python
+async def detect_industry(parsed_rfp: ParsedRFP) -> IndustryTag:
+    """从招标文件文本中识别行业"""
+    # 1. 关键词匹配
+    keyword_scores = {}
+    for industry, config in INDUSTRY_CONFIGS.items():
+        score = sum(1 for kw in config['keywords'] if kw in parsed_rfp.raw_text)
+        keyword_scores[industry] = score
+    
+    # 2. LLM 二次确认（低置信度时）
+    top_industry = max(keyword_scores, key=keyword_scores.get)
+    top_score = keyword_scores[top_industry]
+    
+    if top_score < 3:  # 关键词不足，让 LLM 判断
+        industry = await llm_classify_industry(parsed_rfp)
+        return industry
+    
+    return top_industry
+```
+
+**用户可手动覆盖**：解析完成后 UI 展示识别结果，允许切换。
 
 ---
 
@@ -593,6 +988,315 @@ async def ingest_document(path: str) -> Document:
 | 环境变量 | 简单 |
 | **Pydantic Settings** | Python 项目推荐 |
 | Consul / etcd | 分布式 |
+
+## 10.6 合规认证路径（需求 FR-3.8-C / E + HLD §11.5）
+
+> 投标系统必须满足 **等保三级 + ISO/IEC 42001** 两项硬性合规。本节说明技术组件选型与认证实施路径。
+
+### 10.6.1 身份鉴别与访问控制
+
+| 组件 | 选型 | 适用 |
+|---|---|---|
+| **Keycloak** | 开源 OIDC + SAML + RBAC | **推荐（自托管）** |
+| Authentik | 轻量自托管 | 备选 |
+| Ory Hydra / Kratos | 云原生 | 复杂场景 |
+| 阿里云 RAM / 华为云 IAM | 云 SaaS | 仅 SaaS 模式 |
+
+**Keycloak 部署**：
+- 单实例 2 vCPU / 4GB，PostgreSQL 后端
+- 内置 OAuth2 / OIDC / SAML 2.0
+- 支持 MFA（TOTP、SMS、Email）
+- 角色继承 + 细粒度权限
+
+**多租户隔离**：
+- Keycloak Realm 隔离（每客户一个 Realm）
+- 或同 Realm + Group 隔离（适合多子部门）
+- ABAC 通过 Protocol Mapper 注入用户属性到 JWT
+
+### 10.6.2 密钥管理
+
+| 方案 | 适用 |
+|---|---|
+| **HashiCorp Vault** | 私有化推荐 |
+| 云 KMS（AWS KMS / 阿里云 KMS） | SaaS 模式 |
+| SOPS + age | 轻量加密 |
+
+**Vault 用法**：
+```bash
+# 启用 Transit 引擎（应用层加密）
+vault secrets enable transit
+vault write -f transit/keys/bid-data
+
+# 应用层加密
+vault write transit/encrypt/bid-data plaintext=$(echo "敏感数据" | base64)
+vault write transit/decrypt/bid-data ciphertext="vault:v1:..."
+```
+
+### 10.6.3 数据加密
+
+| 层 | 方案 |
+|---|---|
+| 传输 | TLS 1.3（ACME 自动证书） |
+| 磁盘 | LUKS（Linux）/ cloud KMS 加密 EBS / 阿里云盘 |
+| 应用层 | AES-256-GCM（敏感字段：身份证、银行卡、报价） |
+| 备份 | GPG 加密 + 异地存储 |
+
+**应用层加密示例**：
+```python
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os
+
+def encrypt_field(plaintext: str, key: bytes) -> str:
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)
+    ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
+    return f"{nonce.hex()}:{ct.hex()}"
+
+def decrypt_field(ciphertext: str, key: bytes) -> str:
+    nonce_hex, ct_hex = ciphertext.split(":")
+    nonce = bytes.fromhex(nonce_hex)
+    ct = bytes.fromhex(ct_hex)
+    return AESGCM(key).decrypt(nonce, ct, None).decode()
+```
+
+### 10.6.4 审计日志
+
+**Loki + 结构化 JSON**：
+
+```python
+import structlog
+import logging
+import sys
+
+# 业务日志全结构化
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),   # 输出 JSON 给 Loki 抓取
+    ],
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+)
+
+log = structlog.get_logger()
+log.info("bid_created", bid_id="b-001", user_id="u-001", industry="it", chapters=50)
+```
+
+**审计日志要求**（等保三级）：
+- 保留 ≥ 180 天在线 + 3 年归档
+- 防篡改：append-only S3 + Object Lock
+- 全覆盖：登录、CRUD、LLM 调用、文件下载、权限变更
+
+**Loki 部署**：
+- 单实例 2 vCPU / 4GB（百万级日志/天）
+- 启用 S3 后端
+- Promtail 收集容器日志
+
+### 10.6.5 WAF / DDoS
+
+| 部署模式 | 方案 |
+|---|---|
+| SaaS | **Cloudflare**（含 WAF + DDoS） |
+| 私有化（公网） | ModSecurity + Nginx + 长亭雷池 |
+| 私有化（内网） | 仅 Nginx ACL |
+
+### 10.6.6 ISO 42001 专项
+
+**AI 决策可追溯**（ISO 42001 核心要求）：
+- LLM 调用必须留痕：prompt + response + model_version + temperature
+- 章节级 traceability：每段正文可追溯到 evidence_id
+- 决策可回放：审计员可重放任意时刻的 AI 决策
+
+**数据治理**：
+- 训练数据（如有）标注来源（招股书 / 公开标书 / 客户授权数据）
+- 推理数据：客户上传的招标文件 → 严格客户隔离
+- 模型版本控制：MLflow 或 DVC
+
+**第三方管理**（LLM Provider）：
+- 多个 provider 备选（Claude / DeepSeek / 通义千问）
+- 熔断降级：provider 不可用时切换
+- SLA 监控：可用性 ≥ 99.5%、P99 延迟 < 30s
+
+### 10.6.7 认证时间表
+
+| 阶段 | 时间 | 工作 |
+|---|---|---|
+| **M0-M3** 准备 | 3 个月 | 差距分析、补齐控制、文档 |
+| **M3-M6** 试运行 | 3 个月 | 内部审计 + 模拟测评 |
+| **M6-M9** 认证 | 3 个月 | 等保三级测评 + ISO 42001 第三方认证 |
+| **M9+** 监督 | 年度 | 复审 + 持续改进 |
+
+## 10.7 私有化部署与本地 LLM 推理（需求 D4 + HLD §12.3）
+
+> 私有化模式必须 100% 离线运行，LLM / Embedding / 文生图全部本地推理。
+
+### 10.7.1 本地 LLM 推理引擎
+
+| 引擎 | 优势 | 适用 |
+|---|---|---|
+| **vLLM** | 吞吐量最高（连续批处理） | **推荐（主）** |
+| SGLang | 复杂 prompt 结构优化 | 备选 |
+| Ollama | 易用、本地原型 | 轻量场景 |
+| llama.cpp | 纯 CPU 推理 | 无 GPU 环境 |
+| TensorRT-LLM | NVIDIA 优化 | 高性能 GPU |
+
+**vLLM 部署示例**：
+```bash
+# Qwen2.5-72B-Instruct-AWQ
+python -m vllm.entrypoints.api_server \
+    --model Qwen/Qwen2.5-72B-Instruct-AWQ \
+    --quantization awq \
+    --tensor-parallel-size 2 \
+    --gpu-memory-utilization 0.85 \
+    --max-model-len 8192 \
+    --port 8001
+
+# Qwen2.5-7B-Instruct（快速任务）
+python -m vllm.entrypoints.api_server \
+    --model Qwen/Qwen2.5-7B-Instruct \
+    --port 8002
+```
+
+### 10.7.2 本地图表渲染
+
+| 图表类型 | 工具 | 替代（公网） |
+|---|---|---|
+| 流程图 / 架构图 | **Mermaid CLI**（本地） | mermaid.ink |
+| 数据图 | **matplotlib + ECharts**（本地导出 PNG/SVG） | - |
+| 文生图（可选） | **SD 3.5 + diffusers**（本地 LoRA） | DALL-E 3 |
+| OCR | **PaddleOCR**（本地） | 云 OCR |
+
+**Mermaid CLI 离线安装**：
+```bash
+# 安装 mmdc（Node.js）
+npm install -g @mermaid-js/mermaid-cli
+
+# 离线渲染
+mmdc -i input.mmd -o output.svg -p puppeteerConfig.json
+```
+
+### 10.7.3 模型量化与降级
+
+| 客户硬件 | 推荐配置 | 性能 |
+|---|---|---|
+| **充足**（2× A100 80G） | Qwen2.5-72B AWQ | 100% 质量 |
+| **中等**（1× A100 40G） | Qwen2.5-32B AWQ | 95% 质量 |
+| **紧张**（1× RTX 4090 24G） | Qwen2.5-7B INT4 | 80% 质量 |
+| **极简**（CPU 32 核） | Qwen2.5-1.5B + llama.cpp | 60% 质量 |
+
+**自适应调度**：
+```python
+def select_model(task_complexity: str, available_gpus: list) -> str:
+    if task_complexity == "high" and len(available_gpus) >= 2:
+        return "qwen2.5-72b-awq"
+    elif task_complexity == "medium":
+        return "qwen2.5-32b-awq"
+    else:
+        return "qwen2.5-7b-int4"
+```
+
+### 10.7.4 离线升级包
+
+```bash
+# 升级包结构
+bid-system-upgrade-v1.2.3/
+├── manifest.yaml              # 版本、checksum
+├── images/
+│   ├── api-v1.2.3.tar
+│   ├── worker-v1.2.3.tar
+│   ├── frontend-v1.2.3.tar
+│   └── llm-qwen2.5-72b-v1.tar  # 模型权重
+├── configs/
+│   └── default.yaml
+├── scripts/
+│   ├── pre-check.sh
+│   ├── backup.sh
+│   ├── upgrade.sh
+│   └── rollback.sh
+└── README.md
+```
+
+**升级流程**：
+```bash
+# 1. 预检
+./scripts/pre-check.sh
+  ✓ 磁盘空间 ≥ 100GB
+  ✓ 数据库连接正常
+  ✓ 当前版本 v1.2.2
+
+# 2. 备份
+./scripts/backup.sh
+  → 数据库快照（pg_dump）
+  → MinIO 增量备份
+  → 配置文件备份
+
+# 3. 加载镜像
+docker load -i images/api-v1.2.3.tar
+docker load -i images/worker-v1.2.3.tar
+
+# 4. 启动新版本
+./scripts/upgrade.sh
+  → 蓝绿部署：先启 v1.2.3，验证健康，切流，停 v1.2.2
+
+# 5. 验证
+./scripts/post-check.sh
+  ✓ 健康检查通过
+  ✓ 冒烟测试通过
+
+# 6. 失败回滚
+./scripts/rollback.sh
+```
+
+### 10.7.4.1 离线升级流程（mermaid 版）
+
+```mermaid
+flowchart TB
+    Start([运维人员触发升级]) --> PreCheck{预检<br/>磁盘/DB/版本}
+    PreCheck -->|失败| Fix[修复环境]
+    Fix --> PreCheck
+    PreCheck -->|通过| Backup[备份<br/>PG 快照 + MinIO 增量 + 配置]
+
+    Backup --> LoadImg[docker load<br/>加载新镜像]
+    LoadImg --> BlueGreen[蓝绿部署]
+
+    BlueGreen --> StartV123[启动 v1.2.3]
+    StartV123 --> HealthCheck{健康检查<br/>5s × 3}
+    HealthCheck -->|失败| Rollback[自动回滚<br/>v1.2.2 恢复]
+    HealthCheck -->|通过| Smoke[冒烟测试]
+    Smoke -->|失败| Rollback
+    Smoke -->|通过| Cutover[切流<br/>Nginx upstream 切换]
+    Cutover --> StopOld[停止 v1.2.2]
+    StopOld --> PostCheck{后检<br/>监控/告警}
+    PostCheck -->|异常| Rollback
+    PostCheck -->|正常| Done([升级完成 v1.2.3])
+
+    Rollback --> VerifyRollback{回滚验证}
+    VerifyRollback -->|成功| DoneRollback([回到 v1.2.2])
+    VerifyRollback -->|失败| ManualEscalate[人工介入<br/>现场支持]
+
+    classDef success fill:#d4edda,stroke:#28a745,stroke-width:2px
+    classDef failure fill:#f8d7da,stroke:#dc3545,stroke-width:2px
+    classDef process fill:#e1f5ff,stroke:#0066cc
+    class Done success
+    class Rollback,ManualEscalate,VerifyRollback failure
+    class Backup,LoadImg,Smoke,Cutover,PostCheck process
+```
+
+### 10.7.5 数据隔离
+
+**单租户数据库实例**：
+- 每客户独立 PostgreSQL 实例（不同容器 / 不同主机）
+- 数据库连接串含 customer_id 标识
+- 应用层强制 customer_id 过滤
+
+**文件存储隔离**：
+- MinIO 桶命名：`bid-customer-{customer_id}-*`
+- 桶 ACL 严格按客户隔离
+- 跨客户访问 0 容忍
+
+**审计**：
+- 所有跨客户访问尝试 → 立即告警 + 阻断
+- 季度安全审计 + 渗透测试
 
 ---
 

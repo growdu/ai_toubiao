@@ -294,13 +294,212 @@ interface LLMRouter {
 interface IllustratorService {
     // 主入口：从 FigureSpec 渲染
     async render(spec: FigureSpec, evidence: Evidence[]): Promise<Illustration>
-    
+
     // 各类型单独入口（便于测试和复用）
     async renderMermaid(source: string, options?: MermaidOptions): Promise<Buffer>
     async renderAIDiagram(prompt: string, style?: string): Promise<Buffer>
     async renderDataChart(data: DataSeries, chartType: ChartType): Promise<Buffer>
     async renderTable(headers: string[], rows: string[][]): Promise<Buffer>
 }
+```
+
+### 2.3.6 解析服务（RFP Parser Service）
+
+对应需求 §3.1（招标文件智能解析），将异构源（PDF/Word/扫描件）解析为统一结构化目录，输出评分项、资质门槛、★号条款、暗标规则，供下游 Planner、Auditor、Scoring 复用。
+
+```typescript
+interface RFPParserService {
+    // 入口：从异构源解析
+    async parse(file: UploadedFile): Promise<ParsedRFP>
+    // 章节结构 + 评分项 + 资质门槛 + 隐性要求（合并为一次大调用）
+    async extractStructure(parsed: ParsedRFP): Promise<RFPStructure>
+    // 单独用于"试解析"或"增量重解析"
+    async extractScoringItems(parsed: ParsedRFP): Promise<ScoringItem[]>
+}
+
+interface ParsedRFP {
+    file_id: string
+    file_type: 'pdf_text' | 'pdf_scanned' | 'docx'
+    raw_text: string                       // 全文（含分页边界）
+    pages: ParsedPage[]
+    metadata: {
+        project_name: string
+        project_id: string
+        issuer: string
+        bid_deadline: Date
+        budget: number | null
+        industry: IndustryTag                // 行业标签（影响 §5.12 行业适配）
+    }
+    parse_duration_ms: number
+}
+
+interface RFPStructure {
+    sections: RFPSection[]                  // 树形目录
+    scoring_items: ScoringItem[]            // 评分项（含权重）
+    qualifications: QualificationRequirement[]
+    hidden_requirements: HiddenRequirement[] // 脚注/附件/备注
+    star_clauses: StarClause[]              // ★号条款（废标红线）
+    dark_label_rules: DarkLabelRule[]       // 暗标规则
+}
+
+interface ScoringItem {
+    id: string
+    category: 'preliminary_form'           // 形式评审
+          | 'preliminary_qual'             // 资格评审
+          | 'preliminary_response'         // 响应性审查
+          | 'detailed_business'            // 商务评分
+          | 'detailed_technical'           // 技术评分
+    weight: number                          // 分值（百分制子项权重）
+    sub_items: ScoringSubItem[]            // 子项
+    description: string
+    chapter_mapping: string[]               // 建议落到的章节 id
+}
+
+interface StarClause {
+    id: string
+    text: string
+    location: { page: number, section: string }
+    severity: 'rejection' | 'mandatory'    // 废标红线 / 必含条款
+    rationale: string                       // LLM 解释"为什么判定为 ★"
+}
+```
+
+**解析流水线**：
+
+```
+[客户端] POST /api/v1/parse (multipart)
+   ↓
+[RFPParserService]
+   │
+   ├─ [1] 文件类型识别
+   │     PDF 文本型：PyMuPDF（fitz）直接抽文本
+   │     PDF 扫描型：Tesseract / PaddleOCR（异步队列，不阻塞主流程）
+   │     Word：python-docx → Markdown 中间态
+   │
+   ├─ [2] 结构化分块（按章节标题 / 页码 / 段落）
+   │
+   ├─ [3] LLM 并行抽取（4 个并发 prompt）
+   │     ├─ 章节大纲 → JSON 树
+   │     ├─ 评分项 → JSON 列表（含权重、category）
+   │     ├─ 资质门槛 → JSON 列表
+   │     └─ ★号条款 → JSON 列表（高优先级 prompt + 二次复核）
+   │
+   ├─ [4] 暗标规则检测
+   │     关键词匹配（"不得出现公司名称" 等）+ LLM 二次确认
+   │
+   └─ [5] 写到 bid_jobs.parse_result (JSONB) + 入 evidence
+   ↓
+[API] 返回 ParsedRFP（含 structure.scoring_items / star_clauses）
+   ↓
+[Planner] 根据 scoring_items 生成 chapter_specs 并校准优先级与篇幅
+```
+
+**性能保证**（百万字 ≤ 60 秒）：
+
+| 阶段 | 时间预算 | 说明 |
+|---|---|---|
+| 文本提取 | ≤ 5s | PyMuPDF C++ 内核 |
+| LLM 抽取（4 并发） | ≤ 30s | Claude Sonnet 4.6 + cache_control |
+| 暗标 + 资质检测 | ≤ 5s | 关键词预筛 + LLM 兜底 |
+| 写库 + 索引 | ≤ 5s | 异步写 |
+| 余量 | 15s | 长尾 IO |
+
+**关键技术决策**：
+- **PDF 文本型用 PyMuPDF**：比 pdfplumber 快 3-5 倍（C++ 内核）
+- **扫描件走异步队列**：不让用户等 OCR，先返回"解析中"状态
+- **LLM 抽取用 cache_control**：章节标题、评分项模板可缓存复用
+- **★号条款二次复核**：第一遍抽取 → 第二遍独立 prompt 校验召回率，漏召回即阻断
+
+### 2.3.7 评分响应服务（Scoring Response Service）
+
+对应需求 §3.5（评分响应与优化模块），与解析服务、章节规划、审计模块联动，是 POINT-2 人在回路的核心数据源。
+
+```typescript
+interface ScoringResponseService {
+    // 响应清单生成（前置：章节规划后立即触发）
+    async generateResponseMatrix(
+        bid_job_id: string,
+        scoring_items: ScoringItem[]
+    ): Promise<ResponseMatrix>
+
+    // 篇幅智能分配（根据评分权重）
+    async allocateWordBudget(
+        scoring_items: ScoringItem[]
+    ): Promise<WordBudgetAllocation[]>
+
+    // 预评分（后置：跨章节审计完成后触发）
+    async preScore(
+        bid_job_id: string,
+        bid_content: BidContent
+    ): Promise<PreScoreReport>
+
+    // 机器可读性评估
+    async evaluateMachineReadability(
+        content: string
+    ): Promise<MachineReadabilityReport>
+
+    // 技术方案优化建议
+    async suggestOptimizations(
+        chapter_id: string
+    ): Promise<OptimizationSuggestion[]>
+}
+
+interface ResponseMatrix {
+    items: ResponseItem[]
+    coverage_rate: number                   // 覆盖率（已响应 / 总项）
+    unaddressed: ScoringItem[]              // 未覆盖的项（关键风险）
+}
+
+interface ResponseItem {
+    scoring_item_id: string
+    requirement_text: string
+    response_chapter_id: string
+    response_summary: string
+    evidence_refs: string[]
+    compliance_status: 'fully' | 'partial' | 'unaddressed'
+    score_estimate: number                  // 0-该项满分，预估得分
+    confidence: number                      // 0-1
+}
+
+interface PreScoreReport {
+    total_score: number                     // 总分（百分制）
+    max_score: number
+    score_breakdown: ScoreBreakdownItem[]   // 按章节/评分项拆解
+    weak_points: WeakPoint[]                // 薄弱点
+    optimization_suggestions: OptimizationSuggestion[]
+}
+
+interface WeakPoint {
+    location: { chapter_id: string, paragraph: string }
+    scoring_item_id: string
+    issue: string
+    expected_score: number
+    current_score: number
+    severity: 'critical' | 'major' | 'minor'
+}
+
+interface OptimizationSuggestion {
+    location: { chapter_id: string, paragraph: string }
+    dimension: 'specificity'                // 表述具体性
+              | 'data_support'              // 数据支撑
+              | 'term_accuracy'             // 术语准确性
+              | 'depth'                     // 方案深度
+    current_snippet: string
+    suggested_action: string
+    expected_score_gain: number
+}
+```
+
+**与现有服务的联动**：
+
+```
+[Parser] ──→ scoring_items ──→ [Scoring Response]
+                                  │
+                                  ├─→ [Planner] 校准 chapter_specs（priority、target_word_count）
+                                  │
+                                  ├─→ [Auditor] 提供"评分项→章节"对照（FR-3.4-B-3 实质性响应）
+                                  │
+                                  └─→ [POINT-2] 人在回路：弱点评分 + 优化建议
 ```
 
 ---
@@ -360,6 +559,45 @@ interface IllustratorService {
 [客户端] 下载 docx + pdf                                                                                  ↓
                                                                                                             ↓
                                                                                                        用户下载
+```
+
+### 3.1.1 端到端流程（mermaid 版）
+
+> 上面的 ASCII 流程图保留作为"无渲染可读"版本；下面 mermaid 版用于清晰的视觉化。
+
+```mermaid
+flowchart TB
+    Start([用户提交招标文件]) --> APICall[POST /api/v1/bids]
+    APICall --> EnqOrch[Orchestrator: enqueue plan task]
+    EnqOrch --> Planner[Planner Task]
+    Planner --> ParseRFP[RFPParser: 解析 PDF/Word]
+    Planner --> Ingest[背景材料索引化]
+    ParseRFP --> LLMCall1[LLM Router: 章节大纲 + 评分项]
+    Ingest --> LLMCall1
+    LLMCall1 --> WriteSpecs[写 chapter_specs + POINT-1]
+    WriteSpecs --> P1Pause{⏸ POINT-1<br/>用户确认/调整}
+    P1Pause -->|确认| Dispatch[Orchestrator: 派发章节任务]
+    P1Pause -->|调整大纲| Planner
+
+    Dispatch --> Workers[Worker Pool<br/>并发度=10]
+    Workers --> ChTask[章节级并行]
+    ChTask --> ChLoop{所有章节完成?}
+    ChLoop -->|否| ChTask
+    ChLoop -->|是| CrossAudit[Cross-Auditor<br/>跨章节一致性]
+    CrossAudit --> RejCheck[Rejection-Check<br/>废标项扫描]
+    RejCheck --> DupCheck[Duplicate-Check<br/>标书查重]
+    DupCheck --> Prescore[Scoring-Response<br/>预评分]
+
+    Prescore --> P2Pause{⏸ POINT-2<br/>用户处理问题}
+    P2Pause -->|处理| CrossAudit
+    P2Pause -->|通过| Assemble[Assembler Task<br/>章节排序+图表编号+目录]
+    Assemble --> DocSvc[Doc Service<br/>生成 docx + PDF]
+    DocSvc --> P3Pause{⏸ POINT-3<br/>用户微调样式}
+    P3Pause -->|微调| DocSvc
+    P3Pause -->|确认| End([用户下载])
+
+    classDef pointClass fill:#ffe4b5,stroke:#ff8c00,stroke-width:2px
+    class P1Pause,P2Pause,P3Pause pointClass
 ```
 
 ## 3.2 端到端时序图
@@ -798,6 +1036,61 @@ for spec in topo_order:
    └─ 异常 → 触发重试或标 failed
 ```
 
+### 4.6.1 调度时序图（mermaid 版）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 用户/Orchestrator
+    participant ORC as Orchestrator
+    participant REDIS as Redis (队列)
+    participant W as Celery Worker ×N
+    participant KB as 知识库
+    participant LLM as LLM Router
+    participant ILL as Illustrator
+    participant AUD as ChapterAuditor
+    participant WD as Watchdog
+
+    U->>ORC: confirm outline (POINT-1 通过)
+    ORC->>ORC: build_dependency_graph(specs)
+    ORC->>ORC: topo_sort(specs)
+    loop for spec in topo_order
+        alt 所有依赖完成
+            ORC->>REDIS: enqueue(spec.priority, chapter_pipeline.s)
+        else 依赖未完成
+            ORC->>ORC: defer(spec)
+        end
+    end
+
+    W->>REDIS: pull task
+    W->>REDIS: redis_lock(chapter:{id})
+    W->>KB: search evidence
+    KB-->>W: chunks + score
+    W->>LLM: write_chapter (含 prompt cache)
+    LLM-->>W: 章节正文
+    W->>ILL: render_figures
+    ILL-->>W: PNG/SVG
+    W->>AUD: audit_chapter
+    AUD-->>W: AuditReport
+    W->>REDIS: release lock
+    W->>ORC: publish chapter.completed
+
+    par 进度推送
+        ORC-->>U: WebSocket 进度
+    and 触发下游
+        alt 所有 critical 章节完成 或 全部完成
+            ORC->>REDIS: enqueue cross_audit
+        end
+    end
+
+    loop 每 5 分钟
+        WD->>W: 检查心跳 + stuck 任务
+        alt 异常
+            WD->>W: 重试 / 标 failed
+        end
+    end
+```
+
 ## 4.7 调度监控指标
 
 ```
@@ -814,6 +1107,82 @@ scheduler_priority_change_total{from, to, reason}
 
 # 防饿死
 chapter_starvation_total{priority, wait_seconds_bucket}
+```
+
+## 4.8 评分响应与预评分调度
+
+评分响应服务（§2.3.7）有两个调度入口，都使用独立的 `scoring-q` 队列（concurrency=4）：
+
+### 4.8.1 响应清单生成（前置调度）
+
+```python
+# 触发点：Planner Task 完成、POINT-1 之前
+@on_event("planning.completed")
+def on_planning_completed(bid_job_id: str):
+    scoring_items = load_bid_job(bid_job_id).parse_result['scoring_items']
+    enqueue(
+        queue='scoring-q',
+        task='scoring_response.generate_matrix',
+        args=(bid_job_id, scoring_items),
+        priority='high'      # ★ 比章节撰写高
+    )
+```
+
+**为什么先于章节撰写**：
+- 评分项含"建议落到的章节 id"（`chapter_mapping`）→ 用于校准 `chapter_specs.chapter_type`
+- 评分项含"权重"（`weight`）→ 用于校准 `chapter_specs.target_word_count`（FR-3.2-F 篇幅智能分配）
+- 评分项含"必含条款"（`is_mandatory`）→ 用于校准 `chapter_specs.priority`
+- POINT-1 人在回路的"响应清单视图"依赖此结果
+
+### 4.8.2 预评分（后置调度）
+
+```python
+# 触发点：Cross-Auditor + Rejection + Duplicate 三个审计 Task 全部完成之后
+@on_event("audit.all_completed")
+def on_audit_all_completed(bid_job_id: str):
+    enqueue(
+        queue='scoring-q',
+        task='scoring_response.pre_score',
+        args=(bid_job_id,),
+        priority='high'
+    )
+```
+
+**预评分结果是 POINT-2 的核心数据源**（详见 §9.5）：
+
+| 严重程度 | UI 表现 | 用户操作 |
+|---|---|---|
+| **critical**（致命） | 红色阻断条 + 必改列表 | 必须全部修复才能进入 POINT-3 |
+| **major**（重要） | 黄色建议条 | 一键"自动修复"或手动改 |
+| **minor**（轻微） | 灰色可选项 | 选择性采纳 |
+
+### 4.8.3 评分队列与并发控制
+
+```yaml
+scoring-q:
+  worker_concurrency: 4
+  task_time_limit: 600s          # 10 min
+  max_retries: 2
+  acks_late: true                # 防 worker 崩溃丢任务
+```
+
+**预算**：
+- 响应清单生成：30-60s（依赖 scoring_items 数量）
+- 预评分：2-5min（依赖章节数与 token 量）
+- 与章节撰写（10 并发）解耦，评分服务异常不阻塞主线
+
+### 4.8.4 评分任务的可观测性
+
+```python
+# 评分任务指标
+scoring_response_duration_seconds{phase="matrix|prescore|readability", status}
+scoring_coverage_rate{bid_job_id}                       # 响应清单覆盖率
+scoring_prescore_total{bid_job_id, severity}            # 各严重程度弱点数
+scoring_optimization_suggestion_total{bid_job_id, dimension}
+
+# 与 POINT-2 联动
+awaiting_review_2_entry_reason{reason="audit_critical|prescore_critical|mixed"}
+point_2_resolution_duration_seconds{action="auto_fix|manual_edit|ignore"}
 ```
 
 ---
@@ -1127,6 +1496,259 @@ L3: S3（永久，按 sha256 前缀分桶）
 复用规则：
 - 同 BidJob 内：图表内容相同 → 直接复用（确保风格统一）
 - 跨 BidJob：图表内容相同 + 同模板 → 可选复用（用户可关闭）
+
+## 5.10 双向语义索引（需求 5.9-②）
+
+> 解决"图表与文本语义对齐"——仅靠占位符的"出现位置"无法保证图表"语义相关"。
+
+### 5.10.1 索引模型
+
+**文本侧指纹**（每段正文提取）：
+```typescript
+interface TextFingerprint {
+    paragraph_id: string                    // 段落 id（chapter + offset）
+    requirement_type: 'arch' | 'process' | 'data' | 'plan' | 'team' | 'comparison' | 'general'
+    keywords: string[]                      // 关键词（去停用词 + TF-IDF top 10）
+    data_fingerprint: string | null         // 数据指纹（数字、百分比等）
+    semantic_vector: number[]               // 384 维 embedding
+}
+```
+
+**图表侧指纹**（每张 FigureSpec 提取）：
+```typescript
+interface FigureFingerprint {
+    figure_id: string
+    type: FigureType
+    topic_keywords: string[]                // 主题关键词
+    data_fingerprint: string | null         // 数据指纹
+    semantic_vector: number[]               // 384 维 embedding
+    cited_paragraph_ids: string[]           // 正向引用（占位符出现位置）
+}
+```
+
+### 5.10.2 双向匹配
+
+```
+[Writer] 生成章节正文
+   ↓
+[TextFingerprint Extractor] → 文本侧指纹序列
+   ↓
+[FigureFingerprint Index] ← 已有/已渲染图表（含历史标书、企业素材库）
+   ↓
+[Similarity Matcher] 双向打分：
+   ├─ 位置相关：占位符出现段落与该图 cited_paragraph_ids 的重合度
+   ├─ 类型匹配：requirement_type 与图 type 的兼容度
+   ├─ 关键词 Jaccard：keywords 与 topic_keywords 的相似度
+   └─ 语义向量余弦：semantic_vector 余弦相似度
+   ↓
+最终 score = 0.2*位置 + 0.2*类型 + 0.2*关键词 + 0.4*语义
+   ↓
+score ≥ 0.65 → 接受为"已配对"
+score < 0.65 → 提示"图表与正文语义不匹配"（审计 issue）
+```
+
+### 5.10.3 存储
+
+- **向量库选型**：MVP 用 PostgreSQL `pgvector`（与主库统一运维）；规模化后切 Qdrant（独立部署，HNSW 索引）
+- **索引结构**：HNSW（m=16, ef_construction=64），查询时 ef=40
+- **更新策略**：图表渲染完成时 upsert 一行；删除时级联清理
+- **监控指标**：`figure_index_size_total`、`semantic_match_score_avg`、`semantic_match_low_score_total{chapter_id}`
+
+### 5.10.4 阈值调优
+
+阈值 0.65 是初始值，需要**大量真实样本调优**：
+- 收集 200+ 章节的人工"图-文相关性"标注
+- 用网格搜索找最优阈值（在 0.55-0.80 之间）
+- 目标：精确率 ≥ 85%、召回率 ≥ 90%
+- 调优结果写入配置文件，热加载
+
+## 5.11 机器可读性双层存储（需求 5.9-⑥）
+
+> 解决"图表既供人阅读（矢量图），又供机读（结构化数据）"——评标专家系统、机器预评分都要依赖机读层。
+
+### 5.11.1 双层结构
+
+```
+每张图表在文档中实际包含两层信息：
+
+[Layer 1: 视觉层]   docx.add_picture(rendered_path, width=Cm(14))
+                    → 矢量图/位图，供人阅读
+
+[Layer 2: 机读层]   docx 内嵌"自定义 XML 部件"（customXml/itemN.xml）
+                    + docPr 描述符（标题/描述/alt 文本）
+                    + caption 段落（图注：含数据表格 + 量化关键词）
+                    → 结构化数据，供机器消费
+```
+
+### 5.11.2 机读层格式
+
+**自定义 XML 部件**（`word/customXml/item1.xml`）：
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<figure xmlns="urn:bid-system:figure:v1" figureId="arch-overview" type="mermaid">
+  <title>系统分层架构图</title>
+  <caption>图 3-2 系统分层架构图</caption>
+  <source code="flowchart TD&#10;  UI[...]" engine="mermaid"/>
+  <structuredData>
+    <nodes>
+      <node id="UI" label="用户层" layer="1"/>
+      <node id="API" label="接口层" layer="2"/>
+      ...
+    </nodes>
+    <edges>
+      <edge from="UI" to="API" label="HTTPS"/>
+    </edges>
+  </structuredData>
+  <keywords>
+    <keyword>分层架构</keyword>
+    <keyword>微服务</keyword>
+    <keyword>5 模块</keyword>          <!-- 量化数据关键词 -->
+    <keyword>6 个月</keyword>          <!-- 量化数据关键词 -->
+  </keywords>
+  <audit>
+    <semanticCheck passed="true" score="0.92"/>
+    <machineReadability score="0.88"/>
+  </audit>
+</figure>
+```
+
+**caption 段落增强**：
+
+```
+图 3-2 系统分层架构图（包含 5 个模块：用户层、接口层、业务层、数据层、基础层；模块间通过 6 条核心接口连接；服务周期 6 个月）
+```
+
+caption 中刻意嵌入"模块数 / 接口数 / 服务周期"等量化关键词，方便 grep + LLM 抽取。
+
+### 5.11.3 docx 写入实现
+
+```python
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+
+def embed_machine_readable_layer(doc, figure_spec, illustration):
+    # 1. 写自定义 XML 部件
+    custom_xml = illustration.machine_readable_xml  # 序列化好的 XML
+    part = doc.part.package.part_related_by_reltype(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml"
+    )
+    part._blob = custom_xml.encode('utf-8')
+
+    # 2. 在图片元素上加 docPr（alt 文本 + 描述）
+    inline = doc.paragraphs[-1]._element.find(qn('w:drawing'))
+    docPr = inline.find('.//' + qn('wp:docPr'))
+    docPr.set('descr', figure_spec.machine_readable_summary)  # alt 文本
+    docPr.set('title', figure_spec.title)
+
+    # 3. caption 增强（量化关键词）
+    caption_text = build_enhanced_caption(figure_spec, illustration)
+    caption = doc.add_paragraph(caption_text, style='Caption')
+```
+
+### 5.11.4 验证
+
+- **导出 docx 后用 `python-docx` 解析验证**：自定义 XML 部件存在、结构合法
+- **用 LibreOffice 转 PDF 验证**：视觉层无变化
+- **写一个机读层解析器**：作为评分响应服务（§2.3.7）的输入，验证能从中抽到评分项
+
+## 5.12 行业适配深度（需求 5.9-④）
+
+> 解决"图表的行业专业性"——初期聚焦 2-3 个高频行业深度优化。
+
+### 5.12.1 行业优先级（产品决策）
+
+| 优先级 | 行业 | 规范标准 | 行业图表特征 |
+|---|---|---|---|
+| **P0（聚焦）** | 工程建设 | GB/T 50326-2017《建设工程项目管理规范》 | 甘特图、施工平面图、进度网络图、组织架构图（含五大员：项目经理/技术负责人/施工员/质检员/安全员） |
+| **P0（聚焦）** | IT 信息化 | — | 分层架构图（4-6 层）、微服务架构、部署拓扑图、ER 图、API 时序图、CI/CD 流水线图 |
+| **P1（聚焦）** | 政府采购 | 政府采购法实施条例 | 响应矩阵、评分对照表、商务条款应答表、技术参数应答表 |
+| **P2（扩展）** | 医疗设备 | 行业数据流向规范 | 数据流向图、设备拓扑、HL7/FHIR 接口图 |
+| **P2（扩展）** | 通信工程 | — | 网络拓扑图、信令流程图 |
+
+> 初期聚焦"工程建设 + IT 信息化 + 政府采购" 3 个高频行业做深；后续按 R5 风险评估扩展医疗 / 通信。
+
+### 5.12.2 行业适配实现
+
+**1. 行业知识库**（独立 namespace）：
+
+```
+kb/industry/
+├── engineering/                # 工程建设
+│   ├── glossary.yaml           # 行业术语表（项目经理 / 五大员 / 施工组织设计 / 工期定额...）
+│   ├── figure_templates/       # 行业图表模板（甘特图、施工平面图）
+│   ├── regulation_refs.yaml    # 法规引用（GB/T 50326-2017 第 X 条...）
+│   └── writing_style.md        # 行业写作风格（偏正式、强约束）
+├── it_infra/                   # IT 信息化
+│   ├── glossary.yaml           # （微服务 / 中台 / DevOps / K8s...）
+│   ├── figure_templates/       # （分层架构、部署拓扑）
+│   └── writing_style.md
+└── government/                 # 政府采购
+    ├── glossary.yaml
+    ├── figure_templates/       # （响应矩阵、应答表）
+    └── regulation_refs.yaml    # （政府采购法实施条例 第 X 条）
+```
+
+**2. 行业检测**：解析服务（§2.3.6）输出 `industry` 标签 → Planner 加载对应行业 namespace
+
+**3. 行业化 Prompt 注入**：
+
+```python
+INDUSTRY_CONTEXT = {
+    'engineering': (
+        "你是工程建设行业的投标专家。\n"
+        "术语遵循 GB/T 50326-2017；项目组织必须含项目经理、技术负责人、施工员、质检员、安全员五大员。\n"
+        "工期计算需引用工期定额；甘特图需标注关键路径。\n"
+    ),
+    'it_infra': (
+        "你是 IT 信息化行业的投标专家。\n"
+        "架构图需体现分层（用户层 / 接口层 / 业务层 / 数据层 / 基础层）；\n"
+        "微服务需考虑服务注册、配置中心、监控告警；\n"
+        "部署拓扑需考虑 K8s / 多 AZ / 容灾。\n"
+    ),
+    'government': (
+        "你是政府采购投标专家。\n"
+        "响应必须严格对照评分项逐条应答；\n"
+        "商务条款应答表格式固定（条款号 / 招标要求 / 投标响应 / 偏离说明）。\n"
+    ),
+}
+
+# 注入到 LLM prompt 的 system 段
+system_prompt = INDUSTRY_CONTEXT[industry] + GLOBAL_SYSTEM_PROMPT
+```
+
+**4. 行业化图表模板**：每个行业有专属的 mermaid 模板库：
+
+```yaml
+# kb/industry/engineering/figure_templates/gantt.yaml
+gantt_construction:
+  template: |
+    gantt
+      title {project_name} 进度计划
+      dateFormat YYYY-MM-DD
+      axisFormat %m-%d
+      section 前期准备
+        编制施工组织设计 :a1, 2026-07-01, 15d
+        现场踏勘         :a2, after a1, 7d
+      section 施工阶段
+        基础工程 :b1, after a2, 30d
+        主体工程 :b2, after b1, 90d
+        装饰工程 :b3, after b2, 60d
+      section 验收
+        分部验收 :c1, after b3, 15d
+        竣工验收 :c2, after c1, 15d
+  required_keywords: [关键路径, 工期定额, 里程碑]
+  required_nodes: [前期准备, 施工阶段, 验收]
+```
+
+**5. 行业化审查**：审计模块（§9.5）根据 industry 加载不同规则：
+- 工程建设：检查"五大员"是否齐全
+- IT 信息化：检查"分层架构"是否完整
+- 政府采购：检查"应答表"格式是否符合固定模板
+
+### 5.12.3 行业扩展机制
+
+新增行业只需添加 `kb/industry/{new_industry}/` 目录 + 在配置中注册，无需改核心代码（Plugin 模式）。
 
 ---
 
@@ -1717,28 +2339,354 @@ async def execute_chapter_pipeline(spec: ChapterSpec, materials: List[Evidence])
 async def cross_chapter_audit(bid_job_id: str) -> CrossAuditReport:
     chapters = await load_all_chapters(bid_job_id)
     response_matrix = await load_response_matrix(bid_job_id)
-    
+
     # 1. 抽取术语表
     glossary = extract_glossary_from_chapters(chapters)
-    
+
     # 2. 响应矩阵交叉
     response_audit = cross_check_response_matrix(response_matrix, chapters)
-    
+
     # 3. 数据一致性（关键参数）
     data_audit = check_data_consistency(chapters, response_matrix)
-    
+
     # 4. 术语一致性
     term_audit = check_term_consistency(chapters, glossary)
-    
+
     # 5. 章节引用完整性
     ref_audit = check_references(chapters, illustrations)
-    
+
     return CrossAuditReport(
         response=response_audit,
         data=data_audit,
         terms=term_audit,
         references=ref_audit
     )
+```
+
+## 9.5 审查模块设计（独立模块，对应需求 §3.4）
+
+> 审计不是"章节内一致性检查"的副产品，而是独立的核心模块——对标书做**全维度**合规校验，输出"致命/重要/轻微"分级风险。
+
+### 9.5.1 模块边界
+
+```
+                        ┌────────────────────────┐
+                        │  Auditor Module        │
+                        │  (独立服务)             │
+                        └────────────────────────┘
+                                  │
+        ┌─────────────────┬───────┴────────┬─────────────────┐
+        ↓                 ↓                ↓                 ↓
+  ChapterAuditor    CrossAuditor    RejectionCheck     DuplicateCheck
+  (章节内)         (跨章节)         (废标扫描)         (查重)
+  9.5.2.1          9.5.2.2          9.5.2.3            9.5.2.4
+```
+
+| 审计器 | 触发时机 | 输出 | 性能预算 |
+|---|---|---|---|
+| **ChapterAuditor** | 章节撰写完成时 | 章节内 issues | < 10s/章节 |
+| **CrossAuditor** | 所有章节完成时 | 跨章节 issues | < 30s/标书 |
+| **RejectionCheck** | CrossAuditor 后 | 废标红线 | < 20s/标书 |
+| **DuplicateCheck** | CrossAuditor 后 | 原创度报告 | < 60s/标书 |
+| **AuditAggregator** | 三个审计完成时 | 聚合 + 分级 + 建议 | < 5s/标书 |
+
+### 9.5.2 八个审计维度（需求 FR-3.4-B-1 ~ B-8）
+
+#### 9.5.2.1 基础信息审查（FR-3.4-B-1）
+
+```python
+async def audit_basic_info(bid_content: BidContent) -> List[AuditIssue]:
+    issues = []
+    # 1. 投标函金额与报价表一致性
+    bid_price_in_letter = extract_price(bid_content.bid_letter)     # 投标函
+    bid_price_in_table = extract_price(bid_content.price_table)     # 报价表
+    if not match_price(bid_price_in_letter, bid_price_in_table):
+        issues.append(AuditIssue(
+            dimension='basic_info',
+            severity='critical',  # ★ 致命
+            location='投标函 / 报价表',
+            issue='投标函金额与报价表不一致',
+            suggestion='以大写金额为准，同步报价表'
+        ))
+
+    # 2. 资质证书有效期
+    for cert in bid_content.qualifications:
+        if cert.expiry_date < bid_content.bid_deadline:
+            issues.append(AuditIssue(
+                dimension='basic_info',
+                severity='critical',
+                location=f'资质证书 {cert.name}',
+                issue=f'证书 {cert.name} 将于 {cert.expiry_date} 到期，早于投标截止',
+                suggestion='更新证书或提供更新承诺函'
+            ))
+
+    # 3. 人员名字一致性（投标函、业绩表、社保、简历必须一致）
+    personnel_names = extract_personnel_names(bid_content)
+    inconsistencies = find_name_inconsistencies(personnel_names)
+    for inc in inconsistencies:
+        issues.append(AuditIssue(
+            dimension='basic_info',
+            severity='major',
+            ...
+        ))
+    return issues
+```
+
+#### 9.5.2.2 格式规范审查（FR-3.4-B-2）
+
+```python
+async def audit_format(docx_path: str) -> List[AuditIssue]:
+    issues = []
+    # 1. 字体、字号、行距、页边距
+    doc = docx.Document(docx_path)
+    for para in doc.paragraphs:
+        if para.style.name.startswith('Heading'):
+            if not check_font(para, expected='黑体', size=14):
+                issues.append(AuditIssue('format', 'major', ...))
+    # 2. 签字盖章完整性（检测是否有签字图、盖章图）
+    if not has_signature_image(docx_path):
+        issues.append(AuditIssue('format', 'major', '缺少签字盖章'))
+    return issues
+```
+
+#### 9.5.2.3 实质性响应审查（FR-3.4-B-3）—— 与评分响应服务联动
+
+```python
+async def audit_substantive_response(
+    bid_content: BidContent,
+    response_matrix: ResponseMatrix
+) -> List[AuditIssue]:
+    issues = []
+    # 1. ★号条款是否响应
+    star_clauses = bid_content.parse_result['star_clauses']
+    for star in star_clauses:
+        if star.severity == 'rejection':
+            # ★★ 废标红线：未响应 = 直接废标
+            responded = find_response_for_clause(bid_content, star.text)
+            if not responded:
+                issues.append(AuditIssue(
+                    dimension='substantive_response',
+                    severity='critical',  # ★★★ 致命
+                    location=f'第 {star.location["page"]} 页 {star.location["section"]}',
+                    issue=f'★号废标条款未响应：{star.text[:50]}...',
+                    suggestion='必须在响应矩阵中明确应答此条款'
+                ))
+
+    # 2. 响应清单覆盖度（来自评分响应服务）
+    coverage = response_matrix.coverage_rate
+    if coverage < 1.0:
+        for item in response_matrix.unaddressed:
+            issues.append(AuditIssue(
+                dimension='substantive_response',
+                severity='major' if item.weight >= 5 else 'minor',
+                issue=f'评分项 {item.id} 未覆盖（权重 {item.weight}）',
+                ...
+            ))
+    return issues
+```
+
+#### 9.5.2.4 逻辑一致性审查（FR-3.4-B-4）
+
+```python
+async def audit_logic(bid_content: BidContent) -> List[AuditIssue]:
+    # 1. 业绩时间逻辑（业绩 1 在 2020、业绩 2 在 2025 → 顺序错乱）
+    # 2. 服务周期匹配（投标函 6 个月 vs 甘特图 6 个月 vs 人员配置表 6 个月）
+    # 3. 关键参数前后一致（项目金额、工期、团队规模）
+    # 用 LLM 比对，但提供"结构化事实表"作为 ground truth 减少幻觉
+    ...
+```
+
+#### 9.5.2.5 查重与原创度（FR-3.4-B-5）
+
+```python
+async def audit_duplicate(bid_content: BidContent, user_id: str) -> List[AuditIssue]:
+    # 1. 跨用户库查重（向量相似度，threshold=0.85 报"高重复"）
+    # 2. 同用户历史标书查重（threshold=0.7 报"低原创"）
+    # 3. 公开网络查重（与公开论文、行业模板的相似度）
+    # 命中后建议"内容去重改写"
+    ...
+```
+
+#### 9.5.2.6 暗标合规审查（FR-3.4-B-6）
+
+```python
+async def audit_dark_label(
+    bid_content: BidContent,
+    dark_label_rules: List[DarkLabelRule]
+) -> List[AuditIssue]:
+    issues = []
+    for rule in dark_label_rules:
+        # 1. 关键词扫描（公司名、项目名、人名）
+        # 2. LLM 二次确认（避免误伤，比如"项目背景"是合规描述）
+        matched = scan_with_llm_confirm(bid_content.text, rule)
+        if matched:
+            issues.append(AuditIssue(
+                dimension='dark_label',
+                severity='critical',
+                issue=f'暗标违规：{rule.description}',
+                location=matched.location,
+                suggestion='自动脱敏 / 替换为通用表述'
+            ))
+    return issues
+```
+
+#### 9.5.2.7 图表数据一致性审查（FR-3.4-B-7）—— 与双向索引联动
+
+```python
+async def audit_figure_data_consistency(bid_content: BidContent) -> List[AuditIssue]:
+    issues = []
+    # 1. 抽取所有关键数据声明（工期、模块数、团队规模等）
+    claims = extract_data_claims(bid_content)  # "本项目工期 6 个月"
+    # 2. 对每张图表（基于机读层 §5.11）核对
+    for fig in bid_content.figures:
+        fig_data = fig.machine_readable_xml  # §5.11 的 customXml
+        for claim in claims:
+            if contradicts(claim, fig_data):
+                issues.append(AuditIssue(
+                    dimension='figure_data',
+                    severity='major',
+                    location=f'图 {fig.id} / 段落 {claim.paragraph_id}',
+                    issue=f'图表与正文数据不一致：{claim.text} vs 图 {fig.id}',
+                    suggestion='同步修改正文或图表'
+                ))
+    return issues
+```
+
+#### 9.5.2.8 图表规范审查（FR-3.4-B-8）
+
+```python
+async def audit_figure_compliance(bid_content: BidContent) -> List[AuditIssue]:
+    issues = []
+    for fig in bid_content.figures:
+        # 1. 编号、标题、图注完整性
+        if not (fig.id and fig.title and fig.caption):
+            issues.append(AuditIssue('figure_compliance', 'minor', ...))
+        # 2. 位置合理性（与描述段落的距离）
+        distance = compute_paragraph_distance(fig, fig.related_paragraph)
+        if distance > 5:  # 离描述段落超过 5 段
+            issues.append(AuditIssue('figure_compliance', 'minor',
+                f'图 {fig.id} 远离描述段落（相距 {distance} 段）',
+                '建议紧跟描述段落'))
+    return issues
+```
+
+### 9.5.3 分级与建议（需求 FR-3.4-C / D）
+
+```python
+class Severity(Enum):
+    CRITICAL = 'critical'   # 致命风险（必改）—— ★号未响应、金额不一致、暗标违规
+    MAJOR = 'major'         # 重要风险（建议改）—— 资质即将过期、术语不统一
+    MINOR = 'minor'         # 轻微瑕疵（可选改）—— 格式小问题、图表位置偏远
+
+# 分级规则表
+SEVERITY_RULES = {
+    'star_clause_unresponded': 'critical',
+    'price_inconsistency': 'critical',
+    'dark_label_violation': 'critical',
+    'cert_expired_before_deadline': 'critical',
+    'sub_clause_unresponded': 'major',
+    'name_inconsistency': 'major',
+    'term_inconsistency': 'major',
+    'figure_data_inconsistency': 'major',
+    'format_issue': 'minor',
+    'figure_position_distant': 'minor',
+    ...
+}
+```
+
+每条 issue 必带 `suggestion`（可操作修改建议），例如：
+- ❌ 旧审计："未提供近 3 年审计报告"
+- ✅ 新审计："**致命风险**：商务标第 5 章缺少近 3 年审计报告。**修改建议**：在第 5.2 节补充 2023-2025 年度审计报告，格式参考附录 B-2；或上传至知识库后由系统自动插入。"
+
+### 9.5.4 与 POINT-2 联动（关键）
+
+POINT-2 人在回路点的"主数据源"是聚合后的 audit 报告 + 预评分报告（§4.8.2）：
+
+```
+[All Auditors] → [AuditAggregator]
+   ↓
+[AggregatedReport]
+   ├─ critical_issues: [...]    ← 阻断打包，必须全部 fix 或 ignore
+   ├─ major_issues: [...]       ← 显示修改建议按钮
+   ├─ minor_issues: [...]       ← 仅展示，不阻断
+   └─ prescore_report: {...}    ← 预评分薄弱点（§2.3.7）
+   ↓
+[POINT-2 UI]
+   ├─ 顶部红色阻断条：N 项致命风险
+   ├─ 中部黄色建议条：N 项重要风险
+   ├─ 底部灰色可选项：N 项轻微瑕疵
+   └─ 右侧预评分仪表盘：当前预估 X / Y 分
+   ↓
+用户操作：
+   - "auto_fix" → 调用自动修复 worker（针对 major 类）
+   - "manual_edit" → 跳转章节编辑
+   - "ignore" → 忽略（仅 minor 可忽略）
+   ↓
+所有 critical 处理后 → Orchestrator 触发 Assembler Task
+```
+
+### 9.5.5 审计性能保证
+
+**百页标书审查 ≤ 10 分钟**（NFR-4.1-C）：
+
+| 审计器 | 时间预算 | 并行度 |
+|---|---|---|
+| ChapterAuditor ×N | ≤ 2min | 10 并发（与撰写并行） |
+| CrossAuditor | ≤ 30s | 单任务 |
+| RejectionCheck | ≤ 20s | 单任务（规则匹配） |
+| DuplicateCheck | ≤ 60s | 单任务（向量检索） |
+| AuditAggregator + ScoringResponse | ≤ 3min | 单任务（LLM 调用） |
+| 总计 | ≤ 6.5min（含余量） | |
+
+### 9.5.6 法规案例库（FR-3.4-A）
+
+```python
+REGULATION_KB = {
+    '招投标法': {
+        'version': '2017 修订',
+        'key_clauses': {
+            '第二十六条': '投标人应当具备承担招标项目的能力',
+            ...
+        },
+        'rejection_cases': [   # 废标案例库
+            {
+                'case_id': 'RC-2024-001',
+                'summary': '未响应★号条款导致废标',
+                'frequency': 'high',
+                'sample': '...',
+            },
+            ...
+        ]
+    },
+    '政府采购法实施条例': {...},
+    'GB/T 50326-2017': {...},   # 工程建设
+}
+```
+
+法规库**持续维护**：运营人员定期更新（季度），中标/落标案例反哺。
+
+### 9.5.7 审查模块流程图（mermaid 版）
+
+```mermaid
+flowchart LR
+    Input[章节正文] --> Parser[规则预解析<br/>★号/暗标/页眉]
+    Parser --> L1{L1 规则层<br/>机械判定}
+    L1 -->|命中| RegResult[规则结果<br/>+ 严重级别]
+    L1 -->|通过| L2[L2 LLM 评审<br/>8 维度]
+    L2 --> Eight[8 维度评分<br/>格式/章节/资质/响应<br/>术语/法规/数据/风险]
+    Eight --> Grader[分级器<br/>critical/major/minor]
+    Grader --> Suggestion[优化建议生成]
+    Suggestion --> Agg[聚合为<br/>AuditReport]
+    RegResult --> Agg
+    Agg --> P2[POINT-2 触发]
+    P2 -->|用户处理| Input
+
+    classDef critical fill:#ffcccc,stroke:#cc0000
+    classDef major fill:#ffe4b5,stroke:#ff8c00
+    classDef minor fill:#ffffcc,stroke:#cccc00
+    class Grader critical
+    class Suggestion major
+    class L2 minor
 ```
 
 ---
@@ -1861,6 +2809,108 @@ async def create_bid(request: Request, ...): ...
 async def chat(...): ...
 ```
 
+## 11.5 合规认证（需求 FR-3.8-C / E）
+
+> 投标数据涉及企业核心商业机密，须满足等级保护三级（等保三级）和 ISO/IEC 42001（AI 管理体系）两项硬性合规。
+
+### 11.5.1 等保三级（FR-3.8-C）
+
+**等保三级 = 国家信息安全等级保护第三级**，是央企/国企/政府/金融行业的硬性要求。
+
+| 控制域 | 措施 | 实现 |
+|---|---|---|
+| **安全通信网络** | 传输加密 + 网络架构 | TLS 1.3 全链路；VPC 私网隔离；API 网关 WAF |
+| **安全区域边界** | 边界防护 + 访问控制 | Nginx 反向代理 + ACL；API 网关鉴权（JWT） |
+| **安全计算环境** | 身份鉴别 + 访问控制 + 数据加密 | RBAC + ABAC 双层；磁盘加密（LUKS / cloud KMS）；敏感字段应用层加密 |
+| **安全管理中心** | 集中管控 + 日志审计 | SIEM 集中日志（结构化 JSON → Loki/ELK）；操作全审计；异常告警 |
+
+**等保三级技术指标**：
+- 身份鉴别：双因素认证（MFA）支持
+- 访问控制：粒度到资源（BidJob 级别）+ 列级（field-level RBAC）
+- 数据完整性：关键数据 HMAC 签名；传输 TLS；存储加密
+- 数据保密性：敏感字段（AES-256）+ 密钥管理（KMS / Vault）
+- 审计日志：保留 ≥ 180 天；防篡改（追加 only）
+- 备份恢复：RPO ≤ 1h / RTO ≤ 4h；异地容灾
+
+**测评流程**：等保三级测评由公安部认证的测评机构执行，每年一次。
+
+### 11.5.2 ISO/IEC 42001 认证（FR-3.8-E）
+
+**ISO/IEC 42001 = 人工智能管理体系国际标准**（AIMS, AI Management System），是 AI 产品的国际合规基准。
+
+**AIMS 核心控制域**：
+
+| 控制域 | 要求 | 我们的实现 |
+|---|---|---|
+| **AI 政策与治理** | 建立组织级 AI 政策 | AI 伦理委员会 + 政策文档（透明性、公平性、可问责） |
+| **AI 风险评估** | 系统性识别 AI 风险 | R1-R7 风险登记册（§十四）；季度评审 |
+| **AI 生命周期管理** | 全生命周期受控 | 解析→生成→审查→输出，每阶段有审计日志 |
+| **数据治理** | 训练/推理数据质量与来源 | 知识库标注来源；evidence chain 可追溯 |
+| **AI 系统影响评估** | DPIA（数据保护影响评估） | 投标数据涉及商业机密；DPIA 模板 + 每年评审 |
+| **第三方管理** | LLM provider 风险 | API Key 不落地；熔断降级（多 provider）；SLA 监控 |
+| **持续监测与改进** | 模型漂移、性能衰减监控 | 指标 + 告警；季度回顾 |
+| **文档与可追溯性** | 决策可解释、可审计 | LLM 输出留痕；prompt 版本化；可回放 |
+
+**认证路径**：
+1. **准备期（M0-M3）**：差距分析、补齐缺失控制、内审
+2. **试运行期（M3-M6）**：全流程跑通、收集证据、纠正预防
+3. **认证期（M6-M9）**：第三方认证机构预审 + 正式审核
+4. **监督期（年度）**：每年复审 + 持续改进
+
+**与等保三级的差异**：
+- 等保三级 = 通用信息安全（不区分 AI/非 AI）
+- ISO 42001 = AI 专属（聚焦 AI 特有风险：幻觉、偏见、可解释性）
+- 两者**互补**，建议同时申请
+
+### 11.5.3 合规技术清单
+
+```
+身份鉴别     ─→  OIDC + MFA (TOTP / SMS)
+访问控制     ─→  Keycloak / Authentik（RBAC + ABAC）
+密钥管理     ─→  HashiCorp Vault / 云 KMS
+数据加密     ─→  应用层 AES-256-GCM + 磁盘 LUKS / cloud KMS
+传输加密     ─→  TLS 1.3
+审计日志     ─→  Loki + 结构化 JSON；append-only S3
+日志保留     ─→  180 天在线 + 3 年归档
+备份         ─→  PostgreSQL WAL 流复制 + S3 快照
+SIEM         ─→  Grafana + Loki + 告警
+WAF          ─→  Cloudflare / ModSecurity
+DDoS         ─→  Cloudflare / 云厂商原生
+DPIA         ─→  年度评审 + 模板化输出
+```
+
+### 11.5.4 合规架构（mermaid 版）
+
+```mermaid
+flowchart TB
+    User[用户] -->|TLS 1.3| WAF[Cloudflare WAF + DDoS]
+    WAF --> ID[OIDC + MFA<br/>Keycloak]
+    ID --> AuthZ[RBAC + ABAC<br/>授权网关]
+
+    AuthZ --> API[FastAPI 服务]
+    API --> App[AES-256-GCM<br/>应用层加密]
+    API --> Vault[HashiCorp Vault<br/>密钥管理]
+
+    API --> PG[(PostgreSQL<br/>WAL 流复制)]
+    API --> MIO[(MinIO<br/>磁盘加密)]
+
+    API -.审计日志.-> Loki[Loki<br/>append-only S3]
+    Loki -.保留.-> S3[S3 Object Lock<br/>180天+3年归档]
+
+    SIEM[Grafana + 告警] -.监控.-> Loki
+    SIEM -.监控.-> WAF
+    SIEM -.监控.-> API
+
+    Backup[PostgreSQL<br/>WAL + 快照] --> S3
+
+    classDef crypto fill:#e1f5ff,stroke:#0066cc
+    classDef audit fill:#fff4e1,stroke:#ff8c00
+    classDef compliance fill:#ffe1f5,stroke:#cc0066
+    class App,Vault crypto
+    class Loki,S3,SIEM,Backup audit
+    class WAF,ID,AuthZ compliance
+```
+
 ---
 
 # 十二、部署架构
@@ -1943,6 +2993,177 @@ services:
 | Grafana | 0.5 | 1GB | 5GB | |
 
 按 50 章节/天的吞吐量，单实例足够。
+
+## 12.3 双部署模式（需求 FR-3.8-A / B）
+
+> 需求 §3.8 明确要求 **SaaS + 私有化** 双模式，覆盖不同客户的数据隔离需求。
+
+### 12.3.1 部署模式对比
+
+| 维度 | SaaS 模式 | 私有化模式 |
+|---|---|---|
+| **目标客户** | 中小企业、试点客户 | 央企、国企、政府、金融 |
+| **数据位置** | 云端（多租户） | 客户内网（单租户） |
+| **网络要求** | 公网 HTTPS | 离线 / 专线 |
+| **LLM 调用** | 云端 LLM API | 本地 LLM 推理 + 离线 |
+| **更新方式** | 滚动升级 | 离线升级包 + 客户授权 |
+| **运维责任** | 我方 | 客户 IT + 我方支持 |
+| **合规** | 等保三级 + ISO 42001 | 由客户决定（通常仅等保） |
+| **部署时间** | 分钟级 | 1-2 周（含环境准备） |
+
+### 12.3.2 SaaS 模式（§12.1 描述）
+
+- 多租户 + 共享集群
+- 公网 HTTPS + WAF + DDoS 防护
+- 滚动升级 + 金丝雀发布
+- 多 region 部署（华东 / 华南 / 华北）
+
+### 12.3.3 私有化模式（FR-3.8-A / B）
+
+**部署形态**：Docker Compose 或 K8s 一键部署到客户内网
+
+**核心约束**：
+- **完全离线**：客户内网无外网访问能力，LLM 必须本地推理
+- **数据隔离**：单租户，独立数据库实例
+- **不依赖外网 API**：mermaid.ink / DALL-E 3 / 公有云 LLM 全部不可用
+
+**私有化部署包**：
+
+```yaml
+# 私有化部署清单（无外网依赖）
+bid-system-private:
+  - API 服务（FastAPI）
+  - Worker 池（Celery）
+  - PostgreSQL（含 pgvector 扩展）
+  - Redis
+  - MinIO（替代 S3）
+  - Prometheus + Grafana
+  - 本地 LLM 推理服务（vLLM / Ollama）
+  - 本地图表渲染引擎（mermaid-cli / matplotlib）
+  - 本地 OCR（PaddleOCR）
+  - 离线升级包管理
+```
+
+**本地 LLM 推理方案**（需求依赖 D4）：
+
+| 模型 | 用途 | 部署方式 | 硬件需求 |
+|---|---|---|---|
+| **Qwen2.5-72B-Instruct-GPTQ** | 主力撰写（替代 Claude） | vLLM 推理，AWQ 4-bit 量化 | 2× A100 80G 或 4× A6000 48G |
+| **Qwen2.5-7B-Instruct** | 快速任务（拆分 / 提取） | vLLM 推理，全精度 | 1× A100 40G |
+| **BGE-large-zh-v1.5** | Embedding（双向索引） | vLLM 推理 | 1× GPU 16G |
+| **Stable Diffusion 3 / FLUX** | 文生图（可选） | diffusers | 1× A100 80G |
+
+**降级策略**（算力不足时）：
+- 用 Qwen2.5-7B 替代 72B（章节质量略降）
+- 用 4-bit AWQ 量化（损失 1-2% 质量）
+- 加大章节串行度（用 1-2 张 GPU 串行推理）
+
+**部署架构**：
+
+```
+[客户内网]
+  ┌─────────────────────────────────────┐
+  │  业务终端（投标人员）                 │
+  └──────────┬──────────────────────────┘
+             │ 内网 HTTPS
+  ┌──────────↓──────────────────────────┐
+  │  Nginx（反向代理 + WAF）             │
+  └──────────┬──────────────────────────┘
+             │
+  ┌──────────↓──────────────────────────┐
+  │  K8s 集群                            │
+  │  ┌────────┐ ┌────────┐ ┌────────┐  │
+  │  │ API ×2 │ │Worker×5│ │Beat ×1 │  │
+  │  └────────┘ └────────┘ └────────┘  │
+  │  ┌────────┐ ┌────────┐ ┌────────┐  │
+  │  │PG主从  │ │ Redis  │ │ MinIO  │  │
+  │  └────────┘ └────────┘ └────────┘  │
+  │  ┌──────────────────────────────┐  │
+  │  │  LLM 推理池                  │  │
+  │  │  ┌──────────┐ ┌──────────┐  │  │
+  │  │  │ vLLM-72B │ │ vLLM-7B  │  │  │
+  │  │  │ 2× A100  │ │ 1× A100  │  │  │
+  │  │  └──────────┘ └──────────┘  │  │
+  │  └──────────────────────────────┘  │
+  └─────────────────────────────────────┘
+```
+
+**离线升级**：
+- 升级包：Docker 镜像 tar + 配置模板 + 升级脚本
+- 升级流程：备份 → 停服 → 加载新镜像 → 启动 → 验证 → 切流
+- 灰度：单实例先升 → 验证 → 全量
+
+**数据隔离**（FR-3.8-B）：
+- 客户独占数据库实例（schema 级别）
+- 知识库 / 上传文件 / 生成内容全部存储在客户内网
+- 不与 SaaS 共享任何数据
+- 升级包不携带客户数据（仅代码 + 模型 + 配置）
+
+### 12.3.4 私有化部署架构（mermaid 版）
+
+```mermaid
+flowchart TB
+    subgraph Client[客户内网]
+        User[投标人员<br/>Web/Desktop]
+    end
+
+    subgraph Edge[边缘层]
+        Nginx[Nginx<br/>反向代理 + WAF]
+    end
+
+    subgraph K8s[K8s 集群]
+        API[API ×2]
+        Worker[Worker ×5]
+        Beat[Beat ×1]
+
+        subgraph Data[数据层]
+            PG[PG 主从]
+            Redis[Redis]
+            MinIO[MinIO]
+        end
+
+        subgraph LLM[LLM 推理池 - 完全离线]
+            vLLM72B[vLLM-72B<br/>Qwen2.5-72B-AWQ<br/>2× A100 80G]
+            vLLM7B[vLLM-7B<br/>Qwen2.5-7B<br/>1× A100 40G]
+            BGE[BGE-large-zh<br/>Embedding<br/>1× GPU 16G]
+            SD3[SD 3.5<br/>文生图<br/>1× A100 80G]
+        end
+
+        subgraph Tool[工具链]
+            MMDC[mermaid-cli<br/>本地渲染]
+            OCR[PaddleOCR<br/>本地 OCR]
+        end
+
+        subgraph Obs[可观测性]
+            Prom[Prometheus]
+            Graf[Grafana]
+        end
+    end
+
+    User -->|内网 HTTPS| Nginx
+    Nginx --> API
+    API --> Worker
+    Worker --> PG
+    Worker --> Redis
+    Worker --> MinIO
+    Worker --> vLLM72B
+    Worker --> vLLM7B
+    Worker --> BGE
+    Worker --> SD3
+    Worker --> MMDC
+    Worker --> OCR
+    Beat --> Redis
+    Prom -.-> API
+    Prom -.-> Worker
+    Graf --> Prom
+
+    classDef llmClass fill:#ffe1f5,stroke:#cc0066
+    classDef dataClass fill:#e1f5ff,stroke:#0066cc
+    classDef offlineClass fill:#fff4e1,stroke:#ff8c00,stroke-width:3px
+    class vLLM72B,vLLM7B,BGE,SD3 llmClass
+    class PG,Redis,MinIO dataClass
+    class LLM,Tool offlineClass
+```
 
 ---
 
