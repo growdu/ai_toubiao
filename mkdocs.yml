@@ -1,0 +1,134 @@
+site_name: AI 标书自动生成系统
+site_description: 产品调研、需求分析与设计文档仓库
+site_author: ai_toubiao
+docs_dir: docs
+site_dir: site
+
+# 不在 Pages 上展示的源文件（README.md 与 .py/.sh/.yml 等）
+exclude_docs: |
+  README.md
+  node_modules/
+  .git/
+  .github/
+  tools/
+  package.json
+  package-lock.json
+  产品需求书-投标文件编制AI工具.docx
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.tabs                # 顶部 tab 导航
+    - navigation.tabs.sticky         # 滚动时 tab 固定
+    - navigation.sections            # 一级标题分组
+    - navigation.expand             # 默认展开所有导航
+    - navigation.top                 # 回到顶部
+    - navigation.tracking            # 锚点跟随
+    - navigation.indexes             # section index 页（如 index.md）
+    - toc.follow                     # toc 跟随滚动
+    - search.suggest                 # 搜索建议
+    - search.highlight               # 搜索高亮
+    - search.share                   # 搜索分享
+    - content.code.copy              # 代码块一键复制
+    - content.code.annotate          # 代码注释
+    - content.tabs.link              # 内容 tab 同步
+    - content.action.edit            # "编辑此页" 按钮
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到暗黑模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到明亮模式
+  font:
+    text: Noto Sans SC
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition                 # !!! note / warning
+  - attr_list                  # {: .class }
+  - def_list                   # 定义列表
+  - footnotes                  # 脚注
+  - md_in_html                 # 允许 markdown 嵌套 html
+  - tables                     # 表格
+  - toc:
+      permalink: true          # 锚点链接
+      toc_depth: 4
+  - pymdownx.details           # 可折叠 admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:      # 支持 mermaid 等自定义块
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search:
+      lang: zh
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: datetime
+      fallback_to_build_date: true
+
+# 编辑此页
+edit_uri: https://github.com/growdu/ai_toubiao/edit/main/docs/
+
+# 不在部署站点中显示
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/growdu/ai_toubiao
+
+# 导航顺序
+nav:
+  - 首页: index.md
+  - 需求基线:
+      - 需求规格说明书: requirements-spec.md
+      - 调研报告: diaoyan.md
+  - 设计与架构:
+      - 设计纲要: framework.md
+      - 技术选型: tech-selection.md
+      - 概要设计: high-level-design.md
+  - 关于:
+      - CI 与本地开发: ci-and-local-dev.md
+
+# 严格模式：内部链接找不到就构建失败
+strict: true
+validation:
+  links:
+    not_found: warn
+    absolute_links: ignore
+    unrecognized_links: ignore
+  nav:
+    omitted_files: ignore
+    not_found: warn
+    absolute_links: ignore
