@@ -1,0 +1,29 @@
+# Lychee link checker config
+# https://github.com/lycheeverse/lychee
+
+# Accept these status codes as success
+accept = [200, 203, 206, 301, 302, 304, 307, 308, 403, 429]
+
+# Exclude noisy patterns
+exclude = [
+  # localhost / dev hosts we won't fetch in CI
+  "^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?/",
+  # Common GitHub anchor pattern that's safe to skip
+  "^https?://github\\.com/.*#$",
+]
+
+# Cache results
+cache = true
+
+# Maximum number of concurrent requests
+max_concurrency = 8
+
+# Request timeout in seconds
+timeout = 20
+
+# Retry failed requests
+retry_wait_time = 5
+max_retries = 2
+
+# User agent
+user_agent = "lychee-link-checker/1.0"

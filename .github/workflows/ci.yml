@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────
+  # 文档结构校验：确保关键文件存在且非空
+  # ───────────────────────────────────────────────────────────
+  structure:
+    name: Project structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required docs
+        run: |
+          set -euo pipefail
+          
+          required=(
+            "README.md"
+            "docs/framework.md"
+            "docs/diaoyan.md"
+            "docs/tech-selection.md"
+            "docs/high-level-design.md"
+          )
+          
+          missing=()
+          for f in "${required[@]}"; do
+            if [[ ! -s "$f" ]]; then
+              missing+=("$f")
+            fi
+          done
+          
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing or empty required files:"
+            for f in "${missing[@]}"; do
+              echo "  - $f"
+            done
+            exit 1
+          fi
+          
+          echo "All required docs present and non-empty."
+
+  # ───────────────────────────────────────────────────────────
+  # Markdown lint
+  # ───────────────────────────────────────────────────────────
+  markdown-lint:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: |
+            **/*.md
+            !node_modules/**/*.md
+
+  # ───────────────────────────────────────────────────────────
+  # 链接检查（异步执行，不阻塞其他检查）
+  # ───────────────────────────────────────────────────────────
+  link-check:
+    name: Link check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lychee link checker
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config .lychee.toml --no-progress '**/*.md' '**/*.yml' '**/*.yaml'
+          fail: false
+          jobSummary: true
+
+  # ───────────────────────────────────────────────────────────
+  # 总状态：所有必须任务通过才算成功
+  # ───────────────────────────────────────────────────────────
+  ci-success:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [structure, markdown-lint]
+    if: always()
+    steps:
+      - name: Check required jobs passed
+        run: |
+          if [[ "${{ needs.structure.result }}" != "success" ]]; then
+            echo "::error::structure job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.markdown-lint.result }}" != "success" ]]; then
+            echo "::error::markdown-lint job failed"
+            exit 1
+          fi
+          echo "All required CI checks passed."
