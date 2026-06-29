@@ -378,27 +378,92 @@ async def render_mermaid(source: str) -> bytes:
 
 数据来源走 evidence chain，无数据不生成。
 
+## 6.5 图表占位符协议（章节正文 → 图表解耦）
+
+章节正文采用**结构化占位符**嵌入图表，使正文撰写与图表渲染解耦：
+
+```
+正文 Markdown 中嵌入：
+
+   本系统采用分层架构，如 [!figure:arch-overview type=mermaid caption=系统分层架构图] 所示。
+
+渲染器：
+   1. 扫描 `\[!figure:(<id>)\s+([^\]]*)\]` 模式
+   2. 抽取 id / attributes（type, caption, data, ...）
+   3. 按 id 在 illustrations 表查渲染产物
+   4. 替换为 docx 图片 + 编号 + 图注
+```
+
+占位符的好处：
+- 撰写阶段只关心"哪里需要图、要什么图"，不必关心怎么渲染
+- 图表生成可异步、可重试、可换实现
+- 替换阶段才绑定具体渲染产物（PNG/SVG）
+- 同一个 placeholder 在不同输出格式下可走不同渲染路径
+
+## 6.6 章节内图表流水线
+
+```
+章节内容（Markdown）
+   │
+   ↓ 正则扫描
+[FigureSpec(id, type, caption, attrs), ...]
+   │
+   ↓ 串行生成（每张独立任务）
+   ├──→ 查 illustrations 表（命中即跳过）
+   ├──→ 数据准备（基于 evidence chain）
+   ├──→ 调用对应 renderer（mermaid / matplotlib / DALL-E / 自实现表格）
+   ├──→ 校验（视觉 + 语义）
+   ├──→ 失败 → fallback 链
+   └──→ 成功 → 写库 + 落 S3
+   │
+   ↓
+返回 Illustration 列表（含 source_path / rendered_path / status）
+```
+
+**章节内图表必须串行**（与第六章 Prompt 缓存策略一致）：
+- 章节正文 → 章节正文+图表占位 → 串行渲染
+- 因为占位符按出现顺序绑定章节号，串行确保编号稳定
+- 图表独立可并发（MVP 用串行简化调试与日志）
+
+## 6.7 失败回退链（按图表类型）
+
+| 图表类型 | 主路径 | 降级 1 | 降级 2 | 最终兜底 |
+|---|---|---|---|---|
+| Mermaid | mermaid.ink | mermaid-cli 本地 | 语法修正重试 | 占位图 + 文字描述 |
+| AI 图 | DALL-E 3 | Replicate SDXL | 国产模型 | 简化 prompt 重试 → 占位图 |
+| 数据图 | matplotlib | plotly（PNG 导出） | 表格替代 | 占位图 + 数据表 |
+| 表格 | 自实现 HTML→docx | pandoc | 纯文本对齐 | 强制输出 |
+
+所有失败记录到 `illustrations.status='failed'` 和 `audit.illustration_issues`，由人在回路点 2 统一处理。
+
 ---
 
 # 七、文档导出选型
 
-## 7.1 Word（.docx）
+## 7.1 Word（.docx）—— 主输出格式
 
 | 库 | 优点 | 缺点 |
 |---|---|---|
 | **python-docx** | 主流、API 稳定 | 表格/样式处理繁琐 |
-| docxtpl | 模板渲染 | 复杂逻辑不便 |
+| docxtpl | 模板渲染（Jinja2 over docx） | 复杂逻辑不便 |
 | pandoc | Markdown → docx 强 | 样式定制弱 |
 | LibreOffice headless | 完美兼容 Word | 重、启动慢 |
 
-**推荐：python-docx + 自实现 HTML → docx**
+**推荐：python-docx + docxtpl + 自实现 HTML → docx**
 
 理由：
 - 标书样式复杂（页眉页脚、目录、序号、图表编号）
 - 走 Markdown → AST → docx，绕过 headless browser
-- 模板套用：解析用户提供的 docx 模板，提取样式后套用
+- **docxtpl 用于模板套用**：解析用户提供的 docx 模板，提取样式与占位后填充
+- **python-docx 用于精细控制**：自动目录、章节编号、图表编号、交叉引用
 
-## 7.2 PDF
+**为什么 Word 是主输出（详见 high-level-design.md §6）：**
+- 标书交付物 99% 是 docx（甲方要求、可批注、可修订、可签章）
+- Word 模板是企业知识资产，复用率高
+- docx 是审计、修改、合并的事实标准
+- PDF 是 docx 的衍生品（投标准备/打印场景）
+
+## 7.2 PDF —— 衍生输出
 
 | 选项 | 优点 | 缺点 |
 |---|---|---|
@@ -409,6 +474,8 @@ async def render_mermaid(source: str) -> bytes:
 **推荐：LibreOffice headless**
 
 理由：docx → pdf 样式一致性最关键（标书格式不能变），其他方案都会有偏差。
+
+PDF 生成在 Word 输出之后异步触发（避免阻塞主流程），并写 PDF 到 S3。
 
 ## 7.3 Mermaid → docx 内嵌
 
