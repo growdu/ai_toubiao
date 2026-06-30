@@ -3,6 +3,7 @@ go 1.25
 use (
 	./services/api-gateway
 	./services/audit-svc
+	./services/billing-svc
 	./services/document-svc
 	./services/knowledge-svc
 	./services/project-svc
