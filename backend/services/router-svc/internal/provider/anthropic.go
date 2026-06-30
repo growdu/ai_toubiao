@@ -162,6 +162,11 @@ func (p *AnthropicProvider) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+// Embed implements Provider. Anthropic does not have a native embedding endpoint.
+func (p *AnthropicProvider) Embed(ctx context.Context, in EmbeddingInput) (*EmbeddingOutput, error) {
+	return nil, fmt.Errorf("anthropic: embeddings not supported, use openai or deepseek provider")
+}
+
 // splitSystemMessages pulls system messages out of the conversation and returns
 // them concatenated as the system prompt (Anthropic's API requires this).
 func splitSystemMessages(msgs []model.Message) ([]anthropicMessage, string) {

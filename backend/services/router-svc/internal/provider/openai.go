@@ -152,6 +152,77 @@ func (p *OpenAICompatible) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+// Embed implements Provider.
+func (p *OpenAICompatible) Embed(ctx context.Context, in EmbeddingInput) (*EmbeddingOutput, error) {
+	if len(in.Texts) == 0 {
+		return &EmbeddingOutput{Embeddings: [][]float32{}, Model: in.Model}, nil
+	}
+
+	body := map[string]any{
+		"model": in.Model,
+		"input": in.Texts,
+	}
+	if in.Format != "" {
+		body["encoding_format"] = in.Format
+	}
+
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("%s: marshal: %w", p.name, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/embeddings", bytes.NewReader(buf))
+	if err != nil {
+		return nil, fmt.Errorf("%s: build request: %w", p.name, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: http: %w", p.name, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%s: read body: %w", p.name, err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: HTTP %d: %s", p.name, resp.StatusCode, truncate(string(respBody), 500))
+	}
+
+	var parsed struct {
+		Data []struct {
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+		Model string `json:"model"`
+		Usage struct {
+			PromptTokens int `json:"prompt_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("%s: decode response: %w", p.name, err)
+	}
+
+	embeddings := make([][]float32, len(parsed.Data))
+	for i, d := range parsed.Data {
+		embeddings[i] = d.Embedding
+	}
+
+	return &EmbeddingOutput{
+		Embeddings: embeddings,
+		Model:      orDefault(parsed.Model, in.Model),
+		Usage: EmbeddingUsage{
+			PromptTokens: parsed.Usage.PromptTokens,
+			TotalTokens:  parsed.Usage.TotalTokens,
+		},
+	}, nil
+}
+
 func toOpenAIMessages(msgs []model.Message) []map[string]string {
 	out := make([]map[string]string, len(msgs))
 	for i, m := range msgs {

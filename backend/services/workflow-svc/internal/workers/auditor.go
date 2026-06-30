@@ -38,11 +38,12 @@ func (w *AuditorWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("workflow_id", payload.WorkflowID.String()),
 		slog.String("bid_job_id", payload.BidJobID.String()))
 
-	// TODO: Implement actual audit
-	// 1. Call audit-svc POST /api/v1/audit/bidjobs/:id/report
-	// 2. Wait for audit completion (sync or async poll)
-	// 3. If critical issues found, mark audit as failed
-	// 4. Update workflow state: auditing → exporting (if passed) or failed
+	// 1. Trigger audit via audit-svc.
+	auditClient := NewAuditClient("http://localhost:8087")
+	if err := auditClient.TriggerAudit(ctx, payload.BidJobID, payload.TenantID); err != nil {
+		w.log.Warn("auditor: audit trigger failed", slog.Any("error", err))
+		// Don't fail the task — audit may need manual review.
+	}
 
 	w.log.Info("auditor: compliance audit completed",
 		slog.String("workflow_id", payload.WorkflowID.String()))

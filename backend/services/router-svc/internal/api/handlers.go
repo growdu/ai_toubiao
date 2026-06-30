@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -38,6 +39,7 @@ func (h *Handlers) Routes() http.Handler {
 
 	r.Route("/api/v1/router", func(r chi.Router) {
 		r.Post("/chat", h.Chat)
+		r.Post("/embed", h.Embed)
 		r.Get("/routes", h.ListRoutes)
 		r.Get("/calls", h.ListCalls)
 		r.Get("/stats", h.Stats)
@@ -115,6 +117,86 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": resp})
+}
+
+// EmbedRequest is the request body for /embed.
+type EmbedRequest struct {
+	TenantID uuid.UUID   `json:"tenant_id"`
+	Texts    []string    `json:"texts"`
+	Model    string      `json:"model,omitempty"`
+	Task     model.Task  `json:"task,omitempty"`
+}
+
+// Embed handles POST /api/v1/router/embed.
+func (h *Handlers) Embed(w http.ResponseWriter, r *http.Request) {
+	var req EmbedRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_INPUT", "malformed JSON body")
+		return
+	}
+	if len(req.Texts) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_INPUT", "texts must not be empty")
+		return
+	}
+	if req.TenantID == uuid.Nil {
+		if claims := middleware.ClaimsFrom(r.Context()); claims != nil && claims.TenantID != "" {
+			if tid, err := uuid.Parse(claims.TenantID); err == nil {
+				req.TenantID = tid
+			}
+		}
+	}
+	if req.TenantID == uuid.Nil {
+		writeError(w, http.StatusBadRequest, "INVALID_INPUT", "tenant_id is required")
+		return
+	}
+
+	// Resolve model from task route if not specified.
+	model := req.Model
+	if model == "" && req.Task != "" {
+		if route := h.RoutesStore.Get().GetRoute(string(req.Task)); route != nil {
+			model = route.Primary.Model
+		}
+	}
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	// Find an embedding-capable provider.
+	providerName := ""
+	var embOutput *provider.EmbeddingOutput
+	var lastErr error
+
+	// Try all providers that support embedding.
+	for _, name := range h.Registry.Names() {
+		p, _ := h.Registry.Get(name)
+		if p == nil {
+			continue
+		}
+		out, err := p.Embed(r.Context(), provider.EmbeddingInput{
+			Model:  model,
+			Texts:  req.Texts,
+			Format: "float",
+		})
+		if err == nil {
+			providerName = name
+			embOutput = out
+			break
+		}
+		lastErr = err
+	}
+	if embOutput == nil {
+		writeError(w, http.StatusBadGateway, "EMBED_FAILED", fmt.Sprintf("no provider succeeded: %v", lastErr))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"embeddings": embOutput.Embeddings,
+			"model":      embOutput.Model,
+			"provider":   providerName,
+			"usage":      embOutput.Usage,
+		},
+	})
 }
 
 // ListRoutes returns the active routing table.

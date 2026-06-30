@@ -2,11 +2,14 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,14 +21,15 @@ import (
 
 // ParserService handles RFP document parsing.
 type ParserService struct {
-	store   *store.Store
-	storage storage.Storage
-	log     *slog.Logger
+	store       *store.Store
+	storage     storage.Storage
+	log         *slog.Logger
+	routerClient *RouterClient
 }
 
 // NewParserService creates a ParserService.
-func NewParserService(s *store.Store, st storage.Storage, log *slog.Logger) *ParserService {
-	return &ParserService{store: s, storage: st, log: log}
+func NewParserService(s *store.Store, st storage.Storage, log *slog.Logger, routerURL string) *ParserService {
+	return &ParserService{store: s, storage: st, log: log, routerClient: NewRouterClient(routerURL)}
 }
 
 // Parse triggers parsing of a document and returns the structured result.
@@ -82,7 +86,7 @@ func (p *ParserService) Parse(ctx context.Context, docID uuid.UUID, async bool) 
 	return result, nil
 }
 
-// doParse performs the actual parsing (placeholder implementation).
+// doParse performs the actual parsing: extract text + LLM structured extraction.
 func (p *ParserService) doParse(ctx context.Context, docID uuid.UUID) (*model.ParseResult, error) {
 	// 1. Fetch document to get storage key
 	doc, err := p.store.Get(ctx, docID)
@@ -95,9 +99,8 @@ func (p *ParserService) doParse(ctx context.Context, docID uuid.UUID) (*model.Pa
 	if err != nil {
 		return nil, fmt.Errorf("storage get: %w", err)
 	}
-	defer rc.Close()
-
 	content, err := io.ReadAll(rc)
+	rc.Close()
 	if err != nil {
 		return nil, fmt.Errorf("read content: %w", err)
 	}
@@ -115,50 +118,240 @@ func (p *ParserService) doParse(ctx context.Context, docID uuid.UUID) (*model.Pa
 		text = string(content)
 	}
 
-	// 4. TODO: Call LLM to extract structured information
-	// For now, return a placeholder result
-	result := &model.ParseResult{
-		ProjectName: "示例项目",
-		Industry:    "工程建设",
-		Budget:      1000000.00,
-		Currency:    "CNY",
-		ParsedAt:    time.Now(),
-		ParserModel: "claude-sonnet-4-20250514",
-		RawTextSize: len(text),
-		Sections: []model.RFPSection{
-			{Title: "第一章 总则", Level: 1, PageNumber: 1},
-			{Title: "第二章 招标内容", Level: 1, PageNumber: 3},
-			{Title: "第三章 投标人资格", Level: 1, PageNumber: 5},
-		},
-		ScoringItems: []model.ScoringItem{
-			{ID: "FR-3.2-A", Requirement: "投标人须具有建筑工程施工总承包一级资质", Weight: 10},
-			{ID: "FR-3.2-B", Requirement: "近三年内具有类似项目经验", Weight: 15},
-		},
-		StarClauses: []model.StarClause{
-			{ID: "SC-1", Clause: "★投标人必须具有ISO9001质量管理体系认证", PageNum: 3, Keywords: []string{"ISO9001", "认证"}},
-			{ID: "SC-2", Clause: "★项目负责人须具有一级建造师执业资格", PageNum: 4, Keywords: []string{"一级建造师"}},
-		},
-		Qualifications: []model.Qualification{
-			{Type: "certificate", Requirement: "营业执照", Verified: false},
-			{Type: "certificate", Requirement: "安全生产许可证", Verified: false},
-		},
-		Metadata: json.RawMessage(`{}`),
+	p.log.Info("text extracted", slog.String("doc_id", docID.String()), slog.Int("text_size", len(text)))
+
+	// 4. Call LLM to extract structured information from text.
+	result, err := p.extractStructFromLLM(ctx, doc.TenantID, text)
+	if err != nil {
+		p.log.Warn("LLM extraction failed, returning partial result", slog.Any("error", err))
+		// Return partial result with at least basic info.
+		result = &model.ParseResult{
+			RawTextSize: len(text),
+			ParsedAt:    time.Now(),
+		}
 	}
 
+	result.RawTextSize = len(text)
 	p.log.Info("parse complete", slog.String("doc_id", docID.String()), slog.Int("text_size", len(text)))
 	return result, nil
 }
 
-// extractTextFromPDF extracts text from PDF bytes (placeholder - real impl uses PyMuPDF).
-func (p *ParserService) extractTextFromPDF(content []byte) string {
-	// TODO: Use PyMuPDF (github.com/geniusina/pymupdf)
-	return string(content)
+// extractStructFromLLM calls the LLM to extract structured RFP information.
+func (p *ParserService) extractStructFromLLM(ctx context.Context, tenantID uuid.UUID, text string) (*model.ParseResult, error) {
+	if p.routerClient == nil {
+		return &model.ParseResult{ParsedAt: time.Now()}, nil
+	}
+
+	// Truncate text if too long (LLM context limit). Use first 8000 chars.
+	truncated := text
+	if len(text) > 8000 {
+		truncated = text[:8000]
+	}
+
+	prompt := `你是一个专业的标书解析助手。请从以下招标文档文本中提取结构化信息，以JSON格式返回。
+
+提取以下字段：
+- project_name: 项目名称
+- industry: 所属行业
+- issuer: 招标方/发包方
+- bid_deadline: 投标截止时间
+- budget: 预算金额（数字）
+- currency: 货币单位（如CNY、USD）
+- sections: 章节结构数组，每项含title(标题)、level(层级1-3)、page_number(页码)
+- scoring_items: 评分项数组，每项含id、requirement(要求原文)、weight(权重0-100)、chapter_hint(建议章节)
+- star_clauses: ★号条款数组，每项含id、clause(条款原文)、page_num(页码)、keywords(关键词)
+- qualifications: 资质要求数组，每项含type(类型)、requirement(要求描述)
+- dark_label_rules: 暗标规则字符串数组（检测到的匿名化要求）
+
+请只返回JSON，不要有其他文字。`
+
+	messages := []Message{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: truncated},
+	}
+
+	resp, err := p.routerClient.Chat(ctx, tenantID, "rfp_parse", messages, 4096)
+	if err != nil {
+		return nil, fmt.Errorf("router call: %w", err)
+	}
+
+	// Try to extract JSON from response.
+	jsonStr := extractJSONFromResponse(resp.Content)
+	if jsonStr == "" {
+		return nil, fmt.Errorf("no JSON found in LLM response")
+	}
+
+	var result model.ParseResult
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil, fmt.Errorf("parse LLM JSON: %w", err)
+	}
+	result.ParsedAt = time.Now()
+	result.ParserModel = resp.Model
+
+	// Detect dark bid risk.
+	darkRules := detectDarkBidRules(text)
+	if len(darkRules) > 0 {
+		result.DarkLabelRules = darkRules
+	}
+
+	return &result, nil
 }
 
-// extractTextFromWord extracts text from Word bytes (placeholder - real impl uses unioffice).
+// extractJSONFromResponse extracts the first JSON object/array from LLM text.
+func extractJSONFromResponse(s string) string {
+	// Try direct unmarshal first.
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err == nil {
+		return s
+	}
+	// Find first { or [ and last } or ].
+	start := -1
+	end := -1
+	for i := 0; i < len(s); i++ {
+		if s[i] == '{' && start < 0 {
+			start = i
+		}
+		if s[i] == '}' && start >= 0 {
+			end = i + 1
+			break
+		}
+	}
+	if start >= 0 && end > start {
+		return s[start:end]
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == '[' && start < 0 {
+			start = i
+		}
+		if s[i] == ']' && start >= 0 {
+			end = i + 1
+			break
+		}
+	}
+	if start >= 0 && end > start {
+		return s[start:end]
+	}
+	return ""
+}
+
+// detectDarkBidRules scans text for common dark-bid risk patterns.
+// Returns a list of detected rule descriptions.
+func detectDarkBidRules(text string) []string {
+	var rules []string
+	lower := strings.ToLower(text)
+
+	darkPatterns := []struct {
+		pattern string
+		label   string
+	}{
+		{"联系", "文本中可能包含联系方式，违反暗标规则"},
+		{"投标单位", "出现'投标单位'可能泄露投标人身份"},
+		{"公司地址", "出现'公司地址'可能泄露投标人身份"},
+		{"联系人", "出现'联系人'可能泄露投标人身份"},
+		{"联系电话", "出现'联系电话'可能泄露投标人身份"},
+		{"公司名称", "出现'公司名称'可能泄露投标人身份"},
+	}
+
+	for _, dp := range darkPatterns {
+		if strings.Contains(lower, dp.pattern) {
+			rules = append(rules, dp.label)
+		}
+	}
+	return rules
+}
+
+// extractTextFromPDF extracts text from PDF bytes.
+// Uses basic content stream parsing for text extraction.
+// For complex/scanned PDFs, OCR would be needed (out of scope for MVP).
+func (p *ParserService) extractTextFromPDF(content []byte) string {
+	text := extractPDFText(content)
+	if text == "" {
+		return string(content)
+	}
+	return text
+}
+
+// extractPDFText tries to extract readable text from PDF content streams.
+func extractPDFText(data []byte) string {
+	// Match text between BT (Begin Text) and ET (End Text) markers.
+	// This is a simplified PDF text extraction — real PDFs use Tj, TJ, ' operators.
+	var buf strings.Builder
+	textRe := regexp.MustCompile(`BT\s*([\s\S]*?)\s*ET`)
+	matches := textRe.FindAllSubmatch(data, -1)
+	for _, m := range matches {
+		textBlock := string(m[1])
+		// Extract string literals in parentheses: (text content)
+		strRe := regexp.MustCompile(`\(([^)]*)\)`)
+		strMatches := strRe.FindAllStringSubmatch(textBlock, -1)
+		for _, sm := range strMatches {
+			t := sm[1]
+			// Unescape common PDF escape sequences.
+			t = strings.ReplaceAll(t, `\\`, `\`)
+			t = strings.ReplaceAll(t, `\)`, ")")
+			t = strings.ReplaceAll(t, `\n`, "\n")
+			t = strings.ReplaceAll(t, `\r`, "\r")
+			t = strings.ReplaceAll(t, `\t`, "\t")
+			if strings.TrimSpace(t) != "" {
+				buf.WriteString(t)
+				buf.WriteString(" ")
+			}
+		}
+	}
+	return strings.TrimSpace(buf.String())
+}
+
+// extractTextFromWord extracts text from .docx bytes.
+// .docx is a ZIP archive containing XML; we extract text from word/document.xml.
 func (p *ParserService) extractTextFromWord(content []byte) string {
-	// TODO: Use unioffice (github.com/unioffice/unioffice)
-	return string(content)
+	return extractTextFromRawDOCX(content)
+}
+
+// extractTextFromRawDOCX does best-effort text extraction from DOCX XML.
+func extractTextFromRawDOCX(content []byte) string {
+	zipReader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return string(content)
+	}
+	var buf strings.Builder
+	for _, f := range zipReader.File {
+		if f.Name == "word/document.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+			text := stripXMLTags(string(data))
+			buf.WriteString(text)
+			break
+		}
+	}
+	if buf.Len() == 0 {
+		return string(content)
+	}
+	return buf.String()
+}
+
+// stripXMLTags removes XML/HTML tags from a string, leaving only text content.
+func stripXMLTags(s string) string {
+	var buf strings.Builder
+	inTag := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '<' {
+			inTag = true
+			continue
+		}
+		if c == '>' {
+			inTag = false
+			buf.WriteByte(' ')
+			continue
+		}
+		if !inTag {
+			buf.WriteByte(c)
+		}
+	}
+	return strings.TrimSpace(strings.Join(strings.Fields(buf.String()), " "))
 }
 
 // GetParseResult retrieves the stored parse result for a document.

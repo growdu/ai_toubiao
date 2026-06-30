@@ -41,15 +41,10 @@ func (w *ExportWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("format", payload.Format))
 
 	// TODO: Implement actual document export
-	// 1. Load all chapter_contents for the bid job
-	// 2. Load illustrations (charts, images)
-	// 3. Call document-svc to assemble Word doc using template
-	//    - Load template from template-svc
-	//    - Replace placeholders with chapter content
-	//    - Embed illustrations
-	// 4. For PDF: call LibreOffice headless conversion
-	// 5. Upload to S3/MinIO
-	// 6. Update workflow state: exporting → done
+	// 1. Load all chapter_contents for the bid job (from workflow-svc store via w.pool)
+	// 2. Load illustrations (charts, images) from illustrations table
+	// 3. Call document-svc /api/v1/export/document with chapter data
+	// 4. Update workflow state: exporting → done
 
 	w.log.Info("export: document exported successfully",
 		slog.String("workflow_id", payload.WorkflowID.String()),

@@ -178,6 +178,16 @@ func (s *Store) CreateChunk(ctx context.Context, c *model.KBChunk) error {
 	return s.pool.QueryRow(ctx, q, c.ID, c.MaterialID, c.TenantID, c.Content, c.ChunkIndex, c.CharStart, c.CharEnd, c.SourceLocation, c.HitCount, c.UsedCount, c.Metadata).Scan(&c.CreatedAt)
 }
 
+// CreateChunkWithVec creates a chunk with its embedding vector.
+func (s *Store) CreateChunkWithVec(ctx context.Context, c *model.KBChunk, vec []float32) error {
+	c.ID = uuid.New()
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO kb_chunks (id, material_id, tenant_id, content, chunk_index, char_start, char_end, source_location, hit_count, used_count, metadata, content_vec)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, c.ID, c.MaterialID, c.TenantID, c.Content, c.ChunkIndex, c.CharStart, c.CharEnd, c.SourceLocation, c.HitCount, c.UsedCount, c.Metadata, vec)
+	return err
+}
+
 // UpdateMaterialIndexed updates indexed_at and chunk_count after ingestion.
 func (s *Store) UpdateMaterialIndexed(ctx context.Context, id uuid.UUID, chunkCount int) error {
 	_, err := s.pool.Exec(ctx, `UPDATE kb_materials SET indexed_at = NOW(), chunk_count = $1, updated_at = NOW() WHERE id = $2`, chunkCount, id)

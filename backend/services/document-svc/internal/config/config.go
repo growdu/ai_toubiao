@@ -12,6 +12,7 @@ type Config struct {
 	DSN         string
 	StorageKind string // "minio" or "local"
 	StorageDSN  string // s3://... or /var/lib/...
+	RouterURL   string
 }
 
 func Load() (*Config, error) {
@@ -21,6 +22,7 @@ func Load() (*Config, error) {
 		DSN:         getEnv("DB_DSN", "postgres://postgres:postgres@localhost:5432/bidwriter?sslmode=disable"),
 		StorageKind: getEnv("STORAGE_KIND", "local"),
 		StorageDSN:  getEnv("STORAGE_DSN", "/tmp/bidwriter-storage"),
+		RouterURL:   getEnv("ROUTER_URL", "http://localhost:8083"),
 	}
 	if c.DSN == "" {
 		return nil, fmt.Errorf("DB_DSN is required")

@@ -76,10 +76,11 @@ func run() error {
 	}
 
 	h := &api.Handlers{
-		Store:   store.New(pool),
-		Storage: st,
-		Parser:  service.NewParserService(store.New(pool), st, log),
-		Log:     log,
+		Store:    store.New(pool),
+		Storage:  st,
+		Parser:   service.NewParserService(store.New(pool), st, log, cfg.RouterURL),
+		Exporter: service.NewExporterService(store.New(pool), st, log),
+		Log:      log,
 	}
 
 	// In production, apply auth middleware (JWT verification).

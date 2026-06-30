@@ -32,6 +32,8 @@ type Provider interface {
 	Name() string
 	// Chat sends a single conversation and returns the model's reply.
 	Chat(ctx context.Context, in ChatInput) (*ChatOutput, error)
+	// Embed returns vector embeddings for the given texts.
+	Embed(ctx context.Context, in EmbeddingInput) (*EmbeddingOutput, error)
 	// EstimateCost returns an upper-bound USD cost for the call, used for
 	// pre-flight budget checks.
 	EstimateCost(in ChatInput) float64
@@ -72,4 +74,24 @@ func (r *MapRegistry) Names() []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// EmbeddingInput is the request input for embedding generation.
+type EmbeddingInput struct {
+	Model  string
+	Texts  []string
+	Format string // "float" or "base64", default "float"
+}
+
+// EmbeddingOutput is the response from an embedding provider.
+type EmbeddingOutput struct {
+	Embeddings [][]float32
+	Model      string
+	Usage      EmbeddingUsage
+}
+
+// EmbeddingUsage reports token usage for an embedding call.
+type EmbeddingUsage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	TotalTokens  int `json:"total_tokens"`
 }

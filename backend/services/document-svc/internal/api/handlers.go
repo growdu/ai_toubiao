@@ -24,10 +24,11 @@ import (
 const maxUploadBytes = 100 << 20 // 100 MB
 
 type Handlers struct {
-	Store   *store.Store
-	Storage storage.Storage
-	Parser  *service.ParserService
-	Log     *slog.Logger
+	Store    *store.Store
+	Storage  storage.Storage
+	Parser   *service.ParserService
+	Exporter *service.ExporterService
+	Log      *slog.Logger
 }
 
 func (h *Handlers) Routes() http.Handler {
@@ -42,7 +43,7 @@ func (h *Handlers) Routes() http.Handler {
 
 	r.Route("/api/v1/documents", func(r chi.Router) {
 		r.Get("/", h.list)
-		r.Post("/", h.upload)        // multipart upload
+		r.Post("/", h.upload)         // multipart upload
 		r.Post("/json", h.createJSON) // metadata-only registration
 		r.Get("/{id}", h.get)
 		r.Patch("/{id}", h.update)
@@ -51,6 +52,11 @@ func (h *Handlers) Routes() http.Handler {
 		// Parse endpoints
 		r.Post("/{id}/parse", h.parse)
 		r.Get("/{id}/parse-result", h.getParseResult)
+	})
+
+	// Export endpoint (accepts chapter data in request body)
+	r.Route("/api/v1/export", func(r chi.Router) {
+		r.Post("/document", h.exportDocument)
 	})
 
 	return r
@@ -354,6 +360,24 @@ func (h *Handlers) getParseResult(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		h.Log.Error("get parse result", slog.String("err", err.Error()))
+		httperr.InternalError(w, rid)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
+// POST /api/v1/export/document — export bid document to Word/PDF
+func (h *Handlers) exportDocument(w http.ResponseWriter, r *http.Request) {
+	rid := logger.RequestIDFrom(r.Context())
+	var req service.ExportRequest
+	if err := readJSON(r.Body, &req); err != nil {
+		httperr.InvalidInput(w, rid, "invalid JSON: "+err.Error(), nil)
+		return
+	}
+
+	result, err := h.Exporter.Export(r.Context(), &req)
+	if err != nil {
+		h.Log.Error("export document", slog.String("err", err.Error()))
 		httperr.InternalError(w, rid)
 		return
 	}

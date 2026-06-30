@@ -60,7 +60,7 @@ func run() error {
 	defer pool.Close()
 
 	s := store.New(pool)
-	kbSvc := service.NewKBService(s, log)
+	kbSvc := service.NewKBService(s, log, cfg.RouterURL)
 	h := &api.Handlers{
 		KBService: kbSvc,
 		Log:       log,

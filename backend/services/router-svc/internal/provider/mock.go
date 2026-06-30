@@ -110,6 +110,28 @@ func (m *MockProvider) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+// Embed implements Provider.
+func (m *MockProvider) Embed(ctx context.Context, in EmbeddingInput) (*EmbeddingOutput, error) {
+	m.mu.Lock()
+	m.calls++
+	m.mu.Unlock()
+
+	dim := 1536 // match text-embedding-3-small default dimension
+	embeddings := make([][]float32, len(in.Texts))
+	for i := range in.Texts {
+		vec := make([]float32, dim)
+		for j := range vec {
+			vec[j] = 0.01 * float32((i*j)%100)
+		}
+		embeddings[i] = vec
+	}
+	return &EmbeddingOutput{
+		Embeddings: embeddings,
+		Model:      in.Model,
+		Usage:      EmbeddingUsage{PromptTokens: len(in.Texts) * 10, TotalTokens: len(in.Texts) * 10},
+	}, nil
+}
+
 // estimateTokens uses a 4-chars-per-token heuristic. Good enough for budget
 // pre-checks; the real provider returns the authoritative count.
 func estimateTokens(msgs []model.Message) int {

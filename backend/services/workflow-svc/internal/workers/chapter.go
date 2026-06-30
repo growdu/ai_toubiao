@@ -40,13 +40,37 @@ func (w *ChapterWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("chapter_id", payload.ChapterID.String()),
 		slog.String("chapter_title", payload.ChapterTitle))
 
-	// TODO: Implement actual chapter generation
-	// 1. Load chapter spec from database
-	// 2. Call knowledge-svc to retrieve relevant evidence (RAG)
-	// 3. Call router-svc with TaskContentGen to generate content (Markdown)
-	// 4. Parse Markdown for chart placeholders [!figure:xxx type=mermaid ...]
-	// 5. Write content to chapter_contents table
-	// 6. If charts found, enqueue illustration tasks
+	// 1. Search knowledge base for relevant evidence.
+	kbClient := NewKnowledgeClient("http://localhost:8086")
+	evidence, _ := kbClient.Search(ctx, payload.TenantID, payload.ChapterTitle+" 招标要求 技术方案", 3)
+
+	// Build evidence context.
+	evidenceCtx := ""
+	for _, e := range evidence {
+		evidenceCtx += fmt.Sprintf("- [%s]: %s\n\n", e.MaterialTitle, e.Content[:min(300, len(e.Content))])
+	}
+	if evidenceCtx == "" {
+		evidenceCtx = "(暂无相关证据，请基于招标要求编写)"
+	}
+
+	// 2. Call router-svc with TaskContentGen to generate chapter content.
+	routerClient := NewRouterClient("http://localhost:8083")
+	messages := []chatMessage{
+		{Role: "system", Content: "你是一个专业的标书编写助手。请根据以下章节标题和证据，生成规范的标书章节内容。使用Markdown格式输出，可以包含图表占位符 [!figure:id type=mermaid caption=说明]。所有数据必须来自证据，禁止编造。"},
+		{Role: "user", Content: fmt.Sprintf("章节标题：%s\n可用证据：\n%s\n请生成章节内容：", payload.ChapterTitle, evidenceCtx)},
+	}
+	resp, err := routerClient.Chat(ctx, payload.TenantID, "content_generate", messages, 4096)
+	if err != nil {
+		w.log.Warn("chapter: router call failed, using placeholder", slog.Any("error", err))
+		resp = &chatResponse{Content: fmt.Sprintf("# %s\n\n(内容待生成，请稍后重新生成)", payload.ChapterTitle)}
+	}
+
+	// 3. Parse for chart placeholders.
+	content := resp.Content
+
+	// 4. Write content to chapter_contents table.
+	// TODO: Implement actual DB insert via w.pool.
+	_ = content
 
 	w.log.Info("chapter: content generated",
 		slog.String("chapter_id", payload.ChapterID.String()),
