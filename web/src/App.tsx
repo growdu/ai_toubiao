@@ -7,6 +7,7 @@ import BidDetailPage from './pages/bids/BidDetailPage'
 import OutlinePage from './pages/bids/OutlinePage'
 import ChaptersPage from './pages/bids/ChaptersPage'
 import AuditPage from './pages/bids/AuditPage'
+import ExportPage from './pages/bids/ExportPage'
 import KnowledgePage from './pages/knowledge/KnowledgePage'
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="bids/:id/outline" element={<OutlinePage />} />
         <Route path="bids/:id/chapters" element={<ChaptersPage />} />
         <Route path="bids/:id/audit" element={<AuditPage />} />
+        <Route path="bids/:id/export" element={<ExportPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
       </Route>
     </Routes>
