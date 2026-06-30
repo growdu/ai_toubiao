@@ -1,17 +1,20 @@
 # 技术选型文档
 
 > 本文档基于 `docs/framework.md` 的设计纲要，对每个技术领域给出推荐选型与候选对比。
-> 选型原则：MVP 阶段优先成熟度与生态丰富度；后续按性能、成本、可维护性逐项替换。
+> 选型原则：性能与工程化并重——后端优先采用 Go（或 Rust）以保证并发与吞吐，前端统一基于 Node.js 生态；MVP 阶段优先成熟度与生态丰富度；后续按性能、成本、可维护性逐项替换。
 
 ---
 
 # 〇、选型原则
 
-1. **生态优先**：AI/LLM 生态最丰富的语言是 Python，业务核心用 Python
-2. **可替换**：每个组件都要有清晰的抽象边界，便于后续替换
-3. **可降级**：AI 调用、图表生成、文档转换都要支持 fallback
-4. **可观测**：从第一天起就接日志/指标/追踪
-5. **本地优先**：MVP 阶段单机可跑，避免过早分布式
+1. **后端性能优先**：核心服务用 Go 1.23+（goroutine + 静态二进制，I/O 并发性能优），Rust 作为 CPU 密集模块的备选
+2. **前端 Node.js 统一**：Web 与桌面客户端均运行在 Node.js 生态上（Vite/构建、Electron 主进程），统一包管理与构建链
+3. **可替换**：每个组件都要有清晰的抽象边界，便于后续替换
+4. **可降级**：AI 调用、图表生成、文档转换都要支持 fallback
+5. **可观测**：从第一天起就接日志/指标/追踪
+6. **本地优先**：MVP 阶段单机可跑，避免过早分布式
+
+> 决策记录：本项目最初考虑 Python FastAPI（AI 生态最强），但为支撑万级章节并发与低资源占用，最终选择 **Go（主）+ Node.js（前端）** 的组合；Rust 在 CPU 密集模块（如大规模文档排版）作为性能备选。
 
 ---
 
@@ -21,72 +24,94 @@
 
 | 方案 | 优点 | 缺点 | 适合场景 |
 |---|---|---|---|
-| **单体（Python FastAPI）** | 部署简单、AI 生态强、异步支持好 | 单机性能上限 | **MVP 推荐** |
+| **单体（Go + Gin/Fiber）** | 单二进制部署简单、Goroutine 并发优、启动快、占用低 | AI 生态较 Python 弱（需 HTTP 自实现少数 SDK） | **MVP 推荐** |
+| 单体（Python FastAPI） | AI 生态最丰富 | 单机并发上限、GIL/内存占用较高 | AI 强依赖且并发低的内部工具 |
+| Go + Rust 双栈 | Go 主服务 + Rust 处理 CPU 密集模块 | 双语言运维、构建链路翻倍 | 后期规模化、有专门性能优化需求 |
 | 微服务（多语言） | 各组件独立扩展 | 复杂度高、AI 生态分裂 | 后期规模化 |
 | Serverless | 弹性好、按量付费 | 冷启动、AI 长任务不友好 | 突发场景 |
 
-**推荐：单体 Python FastAPI**，内置异步任务队列。
+**推荐：单体 Go（Gin/Fiber）**，内置 Asynq/River 异步任务队列；前端统一 Node.js 生态（Web Vite SPA + 桌面 Electron）。
 
 ## 1.2 技术栈全景
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  客户端（可选）                                           │
-│  - Web: React 19 + TypeScript + Vite 7                  │
-│  - Desktop: Electron（参考 openbidkit-yibiao）           │
+│  客户端（Node.js 生态）                                  │
+│  - Web: React 19 + TypeScript + Vite 7（Node.js 构建）  │
+│  - Desktop: Electron 41（Node.js 主进程 + Chromium）     │
 └──────────────────────────────────────────────────────────┘
-                          ↓ HTTPS / IPC
+                          ↓ HTTPS / WSS
 ┌──────────────────────────────────────────────────────────┐
-│  服务端（Python FastAPI）                                │
+│  服务端（Go 1.23+，单体）                                │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐         │
 │  │ API 层     │  │ 任务层     │  │ AI 编排层  │         │
-│  │ FastAPI    │  │ Celery     │  │ LangChain  │         │
+│  │ Gin/Fiber  │  │ Asynq/River│  │ 自研路由   │         │
 │  └────────────┘  └────────────┘  └────────────┘         │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐         │
 │  │ 存储层     │  │ 图表层     │  │ 文档层     │         │
-│  │ SQLAlchemy │  │ Mermaid/SD │  │ python-docx│         │
+│  │ GORM/sqlx  │  │ Mermaid    │  │ unioffice  │         │
 │  └────────────┘  └────────────┘  └────────────┘         │
 └──────────────────────────────────────────────────────────┘
                           ↓
 ┌──────────────────────────────────────────────────────────┐
 │  基础设施                                                │
-│  - PostgreSQL / SQLite  - Redis（broker/cache）          │
+│  - PostgreSQL / SQLite  - Redis（broker/cache/lock）     │
 │  - S3 兼容对象存储        - Prometheus + Grafana         │
 └──────────────────────────────────────────────────────────┘
 ```
+
+> 注：Mermaid 渲染走 Node.js 侧的 `mermaid-cli`（mmdc，调用 puppeteer 渲染 SVG/PNG），与后端解耦；后端只负责把 Mermaid 源码或渲染产物入库/归档。
 
 ---
 
 # 二、后端语言与框架
 
-## 2.1 候选对比
+## 2.1 后端语言选型：Go vs Rust
 
-| 语言 | AI 生态 | 并发模型 | 性能 | 类型系统 |
-|---|---|---|---|---|
-| **Python** | ⭐⭐⭐⭐⭐ | asyncio + 多进程 | 中 | 动态 + type hints |
-| Node.js | ⭐⭐⭐ | 事件循环 | 中高 | TypeScript |
-| Go | ⭐⭐ | goroutine | 高 | 静态 |
-| Rust | ⭐⭐ | async/await | 极高 | 静态 |
+| 维度 | Go 1.23+ | Rust 1.83+ | Python 3.12（备选） |
+|---|---|---|---|
+| **AI/LLM SDK** | ⭐⭐⭐⭐（Anthropic、OpenAI、Google、DeepSeek、硅基流动 等官方/社区 SDK 齐全） | ⭐⭐⭐（官方 SDK 偏少，部分需自实现 HTTP） | ⭐⭐⭐⭐⭐（生态最全） |
+| **并发模型** | ⭐⭐⭐⭐⭐（goroutine，几行代码数万并发） | ⭐⭐⭐⭐⭐（tokio async，类型安全更强） | ⭐⭐⭐（asyncio + GIL 限制） |
+| **性能（吞吐）** | ⭐⭐⭐⭐（I/O 并发优，单核 CPU 略弱） | ⭐⭐⭐⭐⭐（CPU 与内存均优） | ⭐⭐ |
+| **性能（CPU 密集）** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ |
+| **类型系统** | 静态 + 简洁 | 静态 + 严格（生命周期/所有权） | 动态 + type hints |
+| **编译/构建速度** | ⭐⭐⭐⭐⭐（秒级） | ⭐⭐（分钟级） | 解释运行 |
+| **部署** | ⭐⭐⭐⭐⭐（单二进制，可 go:embed） | ⭐⭐⭐⭐⭐（单二进制） | 需要运行时 + 依赖 |
+| **招人难度** | 中 | 难 | 易 |
+| **MVP 迭代速度** | 快 | 慢（编译反馈慢 + 心智负担） | 最快 |
+| **生态成熟度** | web/queue/db/JSON 全面 | web 强，AI/文档/队列较薄 | AI/数据/文档最强 |
 
-**推荐：Python 3.11+**
+**推荐：Go 1.23+**
 
-理由：
-- AI/LLM SDK 最完整（Anthropic / OpenAI / Cohere / DeepSeek 官方 SDK 都是 Python 优先）
-- LangChain / LlamaIndex / DSPy 等编排框架是 Python 原生
-- 数据处理生态（pandas / pydantic / numpy）成熟
-- 异步 IO 已经成熟（asyncio + httpx）
+理由（按权重排序）：
+1. **本项目瓶颈是 I/O**：大模型 API 调用延迟 1–30s/次，goroutine 几万并发足以撑满——不需要 Rust 那种 CPU 极致性能
+2. **AI SDK 已够用**：Anthropic、OpenAI、Google 均有官方 Go SDK；DeepSeek（OpenAI 兼容）、硅基流动、智谱、月之暗面等国内供应商均提供 HTTP/SDK，缺失部分用 `net/http` + SSE 自实现成本可控
+3. **任务队列生态成熟**：Asynq（基于 Redis）、River（基于 Postgres）均为生产级，比 Rust 的 Apalis/background-jobs 稳定得多
+4. **构建/CI 反馈快**：Go 编译秒级，CI 跑完整测试 ≤ 2 分钟；Rust 编译分钟级，严重拖慢迭代节奏
+5. **招人 + 工程化**：Go 工程师数量远超 Rust，单语言可减少运维/构建/CI 复杂度
+6. **资源占用**：单二进制 ~30MB，内存 ~50–200MB/实例，比 Python 节省 3–5 倍
+
+Rust 作为备选保留：若后期出现大规模文档/排版/PDF 计算的 CPU 密集瓶颈，可将该模块用 Rust 重写并通过 gRPC 暴露给 Go 主服务（Go + Rust 双栈）。
 
 ## 2.2 Web 框架
 
 | 框架 | 优点 | 缺点 |
 |---|---|---|
-| **FastAPI** | 异步原生、自动 OpenAPI、Pydantic 集成 | 生态相对新 |
-| Flask | 极简、成熟 | 同步为主，需手动集成 async |
-| Django | 全栈、ORM 强 | 太重、AI 集成不便 |
+| **Gin** | 生态最大、中间件丰富、性能强、文档全 | API 风格略老 |
+| **Fiber** | 受 Express 启发、API 现代、性能最强之一 | 生态略小于 Gin |
+| Echo | 简洁、性能强、中间件机制清晰 | 生态小于 Gin |
+| chi | 轻量、net/http 兼容 | 功能单薄 |
+| net/http（1.22+ mux） | 零依赖、标准库 | 路由/中间件要自实现 |
 
-**推荐：FastAPI**
+**推荐：Gin（默认） / Fiber（追求极致吞吐时）**
 
-理由：异步原生契合章节级并发的 IO 密集型场景；Pydantic v2 适合章节规格/响应矩阵等结构化数据。
+理由：
+- Gin 社区最大（绝大多数中间件/ORM 集成均默认支持 Gin），招人/招协作者成本最低
+- 内置路由、中间件链、JSON 绑定、错误恢复——零样板启动
+- 与 GORM / sqlx / Asynq 的官方示例齐全
+- 若 QPS 突破 5w，可平滑迁移到 Fiber（API 接近 Express）
+
+需要 OpenAPI 文档时搭配 [`swaggo/swag`](https://github.com/swaggo/swag) 或 [`oapi-codegen`](https://github.com/oapi-codegen/oapi-codegen)（从 spec 生成代码）。
 
 ---
 
@@ -96,50 +121,99 @@
 
 | 选项 | 优点 | 缺点 |
 |---|---|---|
-| **Celery** | 成熟、Redis/RabbitMQ broker、丰富的 retry/canvas | 较重、文档分散 |
-| Dramatiq | 轻量、Actor 模型 | 生态小 |
-| RQ | 极简 | 功能单薄 |
-| APScheduler | 定时任务为主 | 不适合长任务链 |
-| Temporal | 工作流引擎、状态机友好 | 学习曲线陡、运维重 |
-| **arq + Redis** | 异步、轻量、原生 asyncio | 文档少 |
+| **Asynq（Redis）** | 生产级、调度/重试/优先级/UI 全、Go 生态最流行 | 依赖 Redis |
+| **River（Postgres）** | 事务一致性最强、纯 Postgres 不需 Redis | 较新、生态小于 Asynq |
+| Temporal（Go SDK） | 工作流引擎、状态机友好 | 学习曲线陡、运维重 |
+| machinery（Redis/RabbitMQ） | 历史最久 | 社区维护放缓 |
+| NATS JetStream | 轻量、内置消息 + KV | 任务模型较薄 |
 
-**推荐：Celery**（MVP）/ **arq**（如果纯异步需求）
+**推荐：Asynq（默认，MVP）/ River（要求强事务时）**
 
 理由：
-- 章节任务有重试/超时/优先级需求，Celery 原生支持
-- canvas（chain/group/chord）正好契合章节级并行 + 章节内串行的模式
-- broker 用 Redis 起步（同时充当缓存）
+- 章节任务有重试/超时/优先级/延迟需求，Asynq 原生支持
+- 配套提供 `asynqmon`（Web UI）监控任务状态、失败重试、worker 负载
+- broker 用 Redis 起步（同时充当缓存 + 分布式锁），与基础设施栈一致
+- 若未来切 Postgres 为主，可平滑迁移到 River（API 类似）
+- 替代 Celery 的角色：Asynq 的 Group/Chain API 对应 Celery 的 canvas（group/chord/chain）
 
 ## 3.2 任务模式实现
 
 章节级并行 + 章节内串行：
 
-```python
-# 章节规划完成后
-chapters = [ch1, ch2, ch3, ...]  # 50 个章节
-job = celery_group(
-    chapter_pipeline.s(ch.id) for ch in chapters  # 每章节独立
-)
-job.apply_async()
+```go
+// 章节规划完成后
+chapters := []*Chapter{ch1, ch2, ch3, ...} // 50 个章节
 
-@celery_app.task(bind=True, max_retries=3)
-def chapter_pipeline(self, chapter_id):
-    # 章节内串行：检索 → 撰写 → 图表 → 内审
-    materials = retrieve_materials(chapter_id)            # 串行 1
-    content = write_chapter(chapter_id, materials)        # 串行 2
-    illustrations = generate_illustrations(chapter_id)    # 串行 3
-    audit = chapter_audit(chapter_id, content, illustrations)  # 串行 4
-    return {"chapter_id": chapter_id, "audit": audit}
+// 章节级并行：每章节入同一队列（默认 10 并发）
+for _, ch := range chapters {
+    payload, _ := json.Marshal(ChapterPayload{ChapterID: ch.ID})
+    if err := asynqClient.Enqueue(
+        asynq.NewTask(TypeChapterPipeline, payload),
+        asynq.Queue("chapter-q"),
+        asynq.MaxRetry(3),
+        asynq.Timeout(30*time.Minute),
+    ); err != nil {
+        return err
+    }
+}
+
+// 章节内串行：worker 内同步调用（也可拆成 4 个子任务用 chain）
+func HandleChapterPipeline(ctx context.Context, t *asynq.Task) error {
+    var p ChapterPayload
+    if err := json.Unmarshal(t.Payload(), &p); err != nil {
+        return err
+    }
+    // 章节内串行：检索 → 撰写 → 图表 → 内审
+    materials, err := retrieveMaterials(ctx, p.ChapterID)          // 串行 1
+    if err != nil { return err }
+    content, err := writeChapter(ctx, p.ChapterID, materials)      // 串行 2
+    if err != nil { return err }
+    illustrations, err := generateIllustrations(ctx, p.ChapterID)  // 串行 3
+    if err != nil { return err }
+    return chapterAudit(ctx, p.ChapterID, content, illustrations)  // 串行 4
+}
+
+// 启动 worker（独立进程，可水平扩容）
+func main() {
+    srv := asynq.NewServer(
+        asynq.RedisClientOpt{Addr: redisAddr},
+        asynq.Config{
+            Concurrency: 10,
+            Queues: map[string]int{"export-q": 1, "planner-q": 5, "chapter-q": 10, "auditor-q": 3},
+            StrictPriority: true,
+        },
+    )
+    mux := asynq.NewServeMux()
+    mux.HandleFunc(TypeChapterPipeline, HandleChapterPipeline)
+    mux.HandleFunc(TypePlanner, HandlePlanner)
+    mux.HandleFunc(TypeAuditor, HandleAuditor)
+    mux.HandleFunc(TypeExport, HandleExport)
+    if err := srv.Run(mux); err != nil { log.Fatal(err) }
+}
 ```
 
 ## 3.3 任务组锁
 
-Celery 不直接提供任务组锁，可用以下方式实现：
-- **Redis SETNX + EX**：每个 chapter_id 一个锁 key
-- **PostgreSQL advisory lock**：`pg_advisory_lock(hashtext(chapter_id))`
-- **etcd / ZooKeeper**：分布式锁，但太重
+Asynq 不直接提供任务组锁，可用以下方式实现：
+- **Redis SETNX + EX**：`SET lock:chapter:<id> <worker-id> NX EX 300`，释放用 Lua 脚本 CAS
+- **Postgres advisory lock**：`pg_try_advisory_lock(hashtext('chapter:' || $1))`
+- **redislock 库**（[`bsm/redislock`](https://github.com/bsm/redislock)）：开箱即用的 Redis 分布式锁
 
-**推荐：Redis SETNX**（MVP）→ **PostgreSQL advisory lock**（规模化）
+**推荐：redislock（Redis）**（MVP）→ **Postgres advisory lock**（规模化或要求强一致时）
+
+```go
+import "github.com/bsm/redislock"
+
+func withChapterLock(ctx context.Context, chapterID string, fn func() error) error {
+    locker := redislock.New(client)
+    lock, err := locker.Obtain(ctx, "lock:chapter:"+chapterID, 5*time.Minute, nil)
+    if err != nil {
+        return err // ErrNotObtained 表示被其他 worker 持有
+    }
+    defer lock.Release(ctx)
+    return fn()
+}
+```
 
 ---
 
@@ -161,18 +235,24 @@ Celery 不直接提供任务组锁，可用以下方式实现：
 - 全文检索（tsvector）可用于知识库章节检索
 - LISTEN/NOTIFY 可用于章节状态实时推送
 
-## 4.2 ORM
+## 4.2 ORM / 数据访问
 
 | 选项 | 优点 | 缺点 |
 |---|---|---|
-| **SQLAlchemy 2.0** | 异步支持、类型友好、生态最广 | 学习曲线 |
-| SQLModel | SQLAlchemy + Pydantic 结合 | 较新、生态小 |
-| Tortoise ORM | Django-like、异步 | 生态小 |
-| Piccolo | 异步、类型友好 | 太小众 |
+| **GORM v2** | 全功能 ORM、关联/迁移/Hooks 完善、文档好 | 性能中等、生成的 SQL 有时不直观 |
+| **sqlx** | 轻量、原生 SQL、显式可控 | 无自动迁移 |
+| **sqlc** | 从 SQL 生成类型安全代码、性能最佳 | 写 SQL，不适合动态查询 |
+| **ent** | Facebook 出品、图模式、类型安全 | 学习曲线、复杂查询表达力一般 |
+| **pgx**（纯 Postgres） | Postgres 特性最全、性能最佳 | 绑死 Postgres |
 
-**推荐：SQLAlchemy 2.0（async）**
+**推荐：GORM v2（默认，CRUD + 关联便利）/ sqlx（复杂查询性能场景）/ pgx（要求 Postgres 原生特性时）**
 
-理由：成熟度最高，章节规格等复杂模型用 declarative + relationship 表达清晰。
+理由：
+- GORM 模型定义清晰、自动迁移减少样板，适合 MVP 快速迭代
+- 复杂章节规格查询用 `db.Raw` + sqlx 风格的 named 参数，避免 ORM 的 N+1
+- 全文检索/JSONB 复杂查询直接用 pgx 写原生 SQL，性能更好
+
+> 注意：Python 时代推荐的 SQLAlchemy 在 Go 中无对应物；GORM 是 Go 生态最接近的全功能 ORM，但哲学不同——Go 社区更推崇"显式优于魔法"，关键路径倾向于 sqlx/pgx 写裸 SQL。
 
 ## 4.3 文件存储
 
@@ -192,7 +272,17 @@ storage/
  └── evidence/{evidence_id}/source.{ext}
 ```
 
-**推荐：MVP 用本地文件系统 + boto3 抽象**（便于后续切到 S3）
+**推荐：MVP 用本地文件系统（用 `afero` 抽象）** → S3 用 [`aws-sdk-go-v2`](https://github.com/aws/aws-sdk-go-v2) service/s3 或 [`minio-go`](https://github.com/minio/minio-go)（直接对接 MinIO/兼容 S3）
+
+```go
+// 抽象接口，便于本地 ↔ S3 切换
+type Storage interface {
+    Put(ctx context.Context, key string, r io.Reader) error
+    Get(ctx context.Context, key string) (io.ReadCloser, error)
+    Delete(ctx context.Context, key string) error
+    Presign(ctx context.Context, key string, ttl time.Duration) (string, error)
+}
+```
 
 ---
 
@@ -235,77 +325,128 @@ storage/
 
 ## 5.3 Prompt 缓存实现
 
-Anthropic 的 `cache_control` 关键点：
+Anthropic 的 `cache_control` 关键点（Go SDK `github.com/anthropics/anthropic-sdk-go`）：
 
-```python
-response = client.messages.create(
-    model="claude-sonnet-4-6",
-    system=[
-        {
-            "type": "text",
-            "text": GLOBAL_FACTS +  # 系统级共享，放最前
-        },
-        {
-            "type": "text",
-            "text": CHAPTER_SPEC,
-            "cache_control": {"type": "ephemeral"}  # 标记可缓存
-        }
-    ],
-    messages=[{"role": "user", "content": ...}]
+```go
+import (
+    "context"
+    "github.com/anthropics/anthropic-sdk-go"
 )
+
+func WriteChapter(ctx context.Context, client *anthropic.Client, sys, spec string, userContent string) (*anthropic.Message, error) {
+    resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+        Model: anthropic.ModelClaudeSonnet4_6,
+        MaxTokens: 8192,
+        System: []anthropic.TextBlockParam{
+            {Type: "text", Text: sys},            // global_facts + 术语表（强缓存）
+            // 注意：cache_control 标记只放在需要缓存的最末段
+        },
+        Messages: []anthropic.MessageParam{
+            {
+                Role: anthropic.MessageRoleUser,
+                Content: []anthropic.ContentBlockParamUnion{
+                    anthropic.NewTextBlock(spec + "\n\n" + userContent),
+                },
+            },
+        },
+    })
+    return resp, err
+}
 ```
 
 缓存位置策略：
 1. `system` 段 1：global_facts + 术语表（所有章节共享）→ **强缓存**
-2. `system` 段 2：章节规格（本章节唯一）→ 章节内复用
+2. `system` 段 2：章节规格（本章节唯一）→ 章节内复用，配合 `CacheControl: {Type: "ephemeral"}`
 3. `messages`：上一轮对话（同章节多轮扩写时复用前缀）
 
 ## 5.4 AI 调用抽象
 
-```python
-class LLMProvider(Protocol):
-    async def chat(self, messages, *, system, max_tokens, temperature,
-                   cache_control=None) -> ChatResponse: ...
+```go
+type ChatMessage struct {
+    Role    string // "user" | "assistant" | "system"
+    Content string
+}
 
-class AnthropicProvider:
-    async def chat(self, ...): ...
+type CacheControl struct {
+    Type string // "ephemeral"
+}
 
-class OpenAIProvider:
-    async def chat(self, ...): ...
+type ChatRequest struct {
+    Model        string
+    Messages     []ChatMessage
+    System       []SystemBlock // 可携带 cache_control
+    MaxTokens    int
+    Temperature  float64
+    ExtraHeaders map[string]string
+}
 
-class DeepSeekProvider:
-    async def chat(self, ...): ...
+type ChatResponse struct {
+    Content      string
+    Usage        Usage // prompt/cache_read/cache_write tokens
+    StopReason   string
+    RawProvider  string // "anthropic" | "openai" | "deepseek" | ...
+}
 
-# Router：按 task 名选择 provider，支持 fallback
-class LLMRouter:
-    async def route(self, task_name: str, messages, **kw) -> ChatResponse:
-        for provider in self.providers_for(task_name):
-            try:
-                return await provider.chat(messages, **kw)
-            except RetryableError:
-                continue  # 下一个 provider
-        raise AllProvidersFailed(...)
+type LLMProvider interface {
+    Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)
+    Name() string
+}
+
+type AnthropicProvider struct{ /* ... */ }
+type OpenAIProvider    struct{ /* ... */ }
+type DeepSeekProvider  struct{ /* ... */ } // OpenAI 兼容 API
+
+// Router：按 task 名选择 provider，支持 fallback
+type LLMRouter struct {
+    providers map[string][]LLMProvider // task_name -> ordered list
+}
+
+func (r *LLMRouter) Route(ctx context.Context, taskName string, req ChatRequest) (*ChatResponse, error) {
+    for _, p := range r.providers[taskName] {
+        resp, err := p.Chat(ctx, req)
+        if err == nil { return resp, nil }
+        if !isRetryable(err) { return nil, err }
+        // 继续下一个 provider
+    }
+    return nil, ErrAllProvidersFailed
+}
 ```
 
 ## 5.5 JSON 修复链路
 
-```python
-async def parse_json_response(content: str, schema: Type[T]) -> T:
-    # 1. 直接解析
-    try: return schema.model_validate_json(content)
-    except ValidationError: pass
+```go
+func ParseJSONResponse[T any](ctx context.Context, content string, retry func(ctx context.Context, err error) (string, error)) (T, error) {
+    var zero T
 
-    # 2. 抽取第一个 {...} 块
-    extracted = extract_first_json_block(content)
-    try: return schema.model_validate_json(extracted)
-    except ValidationError: pass
+    // 1. 直接解析
+    var v T
+    if err := json.Unmarshal([]byte(content), &v); err == nil {
+        return v, nil
+    }
 
-    # 3. 局部修补（不重发）
-    repaired = repair_json(extracted, schema)
-    try: return schema.model_validate_json(repaired)
-    except ValidationError:
-        # 4. 重发一次（仅发送错误信息 + 原内容，不发整个 prompt）
-        return await retry_with_repair(...)
+    // 2. 抽取第一个 {...} 块
+    extracted := extractFirstJSONBlock(content)
+    if err := json.Unmarshal([]byte(extracted), &v); err == nil {
+        return v, nil
+    }
+
+    // 3. 局部修补（不重发）
+    if repaired, ok := repairJSON(extracted); ok {
+        if err := json.Unmarshal([]byte(repaired), &v); err == nil {
+            return v, nil
+        }
+    }
+
+    // 4. 重发一次（仅发送错误信息 + 原内容，不发整个 prompt）
+    if retry != nil {
+        if repaired, err := retry(ctx, errors.New("json parse failed: "+content)); err == nil {
+            if err := json.Unmarshal([]byte(repaired), &v); err == nil {
+                return v, nil
+            }
+        }
+    }
+    return zero, errors.New("json repair exhausted")
+}
 ```
 
 ---
@@ -324,25 +465,35 @@ async def parse_json_response(content: str, schema: Type[T]) -> T:
 
 实现：
 
-```python
-async def render_mermaid(source: str) -> bytes:
-    # 1. 校验语法
-    validate_mermaid_syntax(source)
+```go
+// RenderMermaid 渲染主流程：mermaid.ink → 本地 mmdc → 占位图
+func RenderMermaid(ctx context.Context, source string) ([]byte, error) {
+    // 1. 校验语法
+    if err := validateMermaidSyntax(source); err != nil {
+        return nil, err
+    }
 
-    # 2. 主用：mermaid.ink
-    try:
-        return await fetch_mermaid_ink(source, timeout=15)
-    except (Timeout, NetworkError):
-        pass  # 降级
+    // 2. 主用：mermaid.ink
+    if img, err := fetchMermaidInk(ctx, source, 15*time.Second); err == nil {
+        return img, nil
+    }
 
-    # 3. 降级：本地 mermaid-cli
-    try:
-        return await render_mermaid_local(source)
-    except MermaidRenderError:
-        pass
+    // 3. 降级：本地 mmdc（需要 Node.js 子进程）
+    if img, err := renderMermaidLocal(ctx, source, 30*time.Second); err == nil {
+        return img, nil
+    }
 
-    # 4. 占位图
-    return generate_placeholder_image("Mermaid 渲染失败")
+    // 4. 占位图（永不失败）
+    return generatePlaceholderImage("Mermaid 渲染失败"), nil
+}
+
+func renderMermaidLocal(ctx context.Context, source string, timeout time.Duration) ([]byte, error) {
+    cmd := exec.CommandContext(ctx, "mmdc",
+        "-i", "-", "-o", "-", "-e", "png", "-q",
+    )
+    cmd.Stdin = strings.NewReader(source)
+    return cmd.Output() // 走 PATH；mmdc 由前端 Node.js 工具链安装
+}
 ```
 
 ## 6.2 AI 图（示意图/封面图/组织架构图）
@@ -400,9 +551,10 @@ async def render_mermaid(source: str) -> bytes:
 | **SaaS 模式** | DALL-E 3（云端 API） | FLUX.1 [schnell]（Replicate） | 简化 prompt 重试 → 占位图 |
 | **私有化模式** | SD 3.5（本地 + LoRA） | FLUX.1 [dev]（本地） | 简化 prompt → 占位图 |
 
-**LoRA 风格锁定**（私有化推荐做法）：
+**LoRA 风格锁定**（私有化推荐做法，SD 训练脚本，与后端语言无关——私有化模式下独立 Python 训练任务，产出 `safetensors` 供 Go 主服务调用推理）：
+
 ```python
-# 训练企业专属 LoRA
+# 训练企业专属 LoRA（diffusers + PEFT，仅私有化模式运行）
 lora_config = {
     "base_model": "stabilityai/stable-diffusion-3.5-large",
     "lora_rank": 32,
@@ -411,7 +563,7 @@ lora_config = {
     "output": "models/lora/enterprise_style_v1.safetensors",
 }
 
-# 推理时挂载
+# 推理时挂载（私有化模式由 Python 推理服务挂载，Go 主服务仅发起 HTTP 请求）
 pipe.load_lora_weights("models/lora/enterprise_style_v1.safetensors")
 image = pipe(prompt=prompt, lora_scale=0.8).images[0]
 ```
@@ -438,11 +590,15 @@ image = pipe(prompt=prompt, lora_scale=0.8).images[0]
 
 | 选项 | 优点 | 缺点 |
 |---|---|---|
-| **matplotlib** | Python 原生、可控 | 样式老 |
+| **go-echarts** | 类型安全、绑定 Apache ECharts、样式丰富 | 输出 HTML，需前端渲染或 wkhtmltopdf |
+| **gonum/plot** | 纯 Go、矢量输出 (PDF/SVG/PNG) | 样式较朴素 |
+| **go-chart** | 简单易用 | 功能较少 |
+| **matplotlib**（Python 微服务） | 样式成熟、生态最广 | 需独立 Python 进程（破坏纯 Go 栈） |
 | plotly | 交互式、样式现代 | 输出体积大 |
-| echarts | 样式丰富 | 需要前端渲染 |
 
-**推荐：matplotlib（生成静态图）+ plotly（需要交互时）**
+**推荐：go-echarts（默认，绑定 ECharts 输出 HTML/PNG） / gonum/plot（需要纯 Go 矢量图时）**
+
+> 若团队已有 matplotlib 资产且强需求，可启动一个 Python 微服务专门做图表（gRPC 接口），主服务仍是 Go——这属于 §2.1 提到的"Go + Rust/Python 双栈"特例。
 
 数据来源走 evidence chain，无数据不生成。
 
@@ -479,7 +635,7 @@ image = pipe(prompt=prompt, lora_scale=0.8).images[0]
    ↓ 串行生成（每张独立任务）
    ├──→ 查 illustrations 表（命中即跳过）
    ├──→ 数据准备（基于 evidence chain）
-   ├──→ 调用对应 renderer（mermaid / matplotlib / DALL-E / 自实现表格）
+   ├──→ 调用对应 renderer（mermaid / go-echarts / DALL-E / 自实现表格）
    ├──→ 校验（视觉 + 语义）
    ├──→ 失败 → fallback 链
    └──→ 成功 → 写库 + 落 S3
@@ -499,7 +655,7 @@ image = pipe(prompt=prompt, lora_scale=0.8).images[0]
 |---|---|---|---|---|
 | Mermaid | mermaid.ink | mermaid-cli 本地 | 语法修正重试 | 占位图 + 文字描述 |
 | AI 图 | DALL-E 3 | Replicate SDXL | 国产模型 | 简化 prompt 重试 → 占位图 |
-| 数据图 | matplotlib | plotly（PNG 导出） | 表格替代 | 占位图 + 数据表 |
+| 数据图 | go-echarts | plotly（PNG 导出） | 表格替代 | 占位图 + 数据表 |
 | 表格 | 自实现 HTML→docx | pandoc | 纯文本对齐 | 强制输出 |
 
 所有失败记录到 `illustrations.status='failed'` 和 `audit.illustration_issues`，由人在回路点 2 统一处理。
@@ -512,18 +668,21 @@ image = pipe(prompt=prompt, lora_scale=0.8).images[0]
 
 | 库 | 优点 | 缺点 |
 |---|---|---|
-| **python-docx** | 主流、API 稳定 | 表格/样式处理繁琐 |
-| docxtpl | 模板渲染（Jinja2 over docx） | 复杂逻辑不便 |
-| pandoc | Markdown → docx 强 | 样式定制弱 |
+| **unidoc/unioffice** | Go 原生、API 覆盖度好、支持模板/表格/图表 | 部分高级样式 API 较底层 |
+| docx-template（`gotemplate`） | 类 docxtpl 思路、模板填充 | 复杂逻辑不便 |
+| pandoc（子进程） | Markdown → docx 强 | 样式定制弱 |
 | LibreOffice headless | 完美兼容 Word | 重、启动慢 |
+| go-docx（[`JohnReedLOL/go-docx`](https://github.com/JohnReedLOL/go-docx)） | 简单文档够用 | 功能较薄 |
 
-**推荐：python-docx + docxtpl + 自实现 HTML → docx**
+**推荐：unidoc/unioffice（主） + pandoc 子进程（降级）**
 
 理由：
-- 标书样式复杂（页眉页脚、目录、序号、图表编号）
+- 标书样式复杂（页眉页脚、目录、序号、图表编号）——`unidoc/unioffice` 的 low-level XML 控制力是 Go 生态中唯一可用的
 - 走 Markdown → AST → docx，绕过 headless browser
-- **docxtpl 用于模板套用**：解析用户提供的 docx 模板，提取样式与占位后填充
-- **python-docx 用于精细控制**：自动目录、章节编号、图表编号、交叉引用
+- pandoc 作为降级：处理简单 Markdown 转换场景，作为兜底
+- 若需"模板套用"能力，可自行实现模板占位符解析（`{{var}}` / `{{loop}}`），参考 `unioffice` 的文档/段落/表格 API
+
+> 注意：Go 生态的 docx 库远不如 Python `python-docx` 成熟，部分高级排版需求（复杂表格合并、页眉多列、嵌套样式）需要直接操作底层 XML；这是选择 Go 的代价，但 unioffice 已覆盖 80% 场景。
 
 **为什么 Word 是主输出（详见 high-level-design.md §6）：**
 - 标书交付物 99% 是 docx（甲方要求、可批注、可修订、可签章）
@@ -547,17 +706,30 @@ PDF 生成在 Word 输出之后异步触发（避免阻塞主流程），并写 
 
 ## 7.3 Mermaid → docx 内嵌
 
-```python
-def embed_mermaid_in_docx(doc, illustration):
-    rendered_path = illustration.rendered_path  # PNG/SVG
-    # 1. 插入图片
-    doc.add_picture(rendered_path, width=Cm(14))
-    # 2. 编号（图 3-2）
-    last_paragraph = doc.paragraphs[-1]
-    last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    # 3. 图注
-    caption = doc.add_paragraph(f"图 {illustration.chapter_number}-{illustration.order} {illustration.title}")
-    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+```go
+import (
+    "github.com/unidoc/unioffice/document"
+    "github.com/unidoc/unioffice/measurement"
+)
+
+func embedMermaidInDocx(doc *document.Document, ill *Illustration) error {
+    renderedPath := ill.RenderedPath // PNG/SVG（绝对路径或 io.Reader）
+
+    // 1. 插入图片（宽 14cm）
+    img, err := doc.AddImage(renderedPath)
+    if err != nil { return err }
+    para := doc.AddParagraph()
+    run := para.AddRun()
+    run.AddImage(img, measurement.Centimeter*14)
+
+    // 2. 居中 + 图注（图 3-2 标题）
+    para.Properties().SetAlignment(wml.ST_JcCenter)
+    caption := doc.AddParagraph()
+    caption.Properties().SetAlignment(wml.ST_JcCenter)
+    caption.AddRun().AddText(fmt.Sprintf("图 %s-%d %s", ill.ChapterNumber, ill.Order, ill.Title))
+
+    return nil
+}
 ```
 
 ---
@@ -661,106 +833,125 @@ CREATE TABLE chunk_figure_links (
 
 **混合检索实现**：
 
-```python
-async def hybrid_search(
-    query: str,
-    top_k: int = 10,
-    text_weight: float = 0.5,
-    vec_weight: float = 0.5,
-) -> list[SearchResult]:
-    # 1. 关键词检索（tsvector）
-    keyword_results = await db.execute("""
+```go
+type SearchResult struct {
+    ID      int64
+    Content string
+    Score   float64
+}
+
+func HybridSearch(ctx context.Context, db *pgxpool.Pool, query string, topK int) ([]SearchResult, error) {
+    // 1. 关键词检索（tsvector）
+    keywordRows, err := db.Query(ctx, `
         SELECT id, content, ts_rank_cd(content_tsv, query) AS score
         FROM text_chunks, plainto_tsquery('simple', $1) query
         WHERE content_tsv @@ query
         ORDER BY score DESC LIMIT $2 * 3
-    """, query, top_k)
-    
-    # 2. 语义检索（pgvector）
-    query_vec = await embed(query)  # BGE-large-zh
-    semantic_results = await db.execute("""
+    `, query, topK)
+    if err != nil { return nil, err }
+    defer keywordRows.Close()
+
+    // 2. 语义检索（pgvector）
+    queryVec, err := embed(ctx, query) // BGE-large-zh
+    if err != nil { return nil, err }
+    semanticRows, err := db.Query(ctx, `
         SELECT id, content, 1 - (content_vec <=> $1) AS score
         FROM text_chunks
         ORDER BY content_vec <=> $1
         LIMIT $2 * 3
-    """, query_vec, top_k)
-    
-    # 3. 倒数排名融合（RRF）
-    fused = reciprocal_rank_fusion(
-        [keyword_results, semantic_results],
-        weights=[text_weight, vec_weight]
-    )
-    return fused[:top_k]
+    `, queryVec, topK)
+    if err != nil { return nil, err }
+    defer semanticRows.Close()
+
+    // 3. 倒数排名融合（RRF）
+    return reciprocalRankFusion(keywordRows, semanticRows, topK), nil
+}
 ```
 
 **双向查询示例**：
 
-```python
-# 查询 1: 文本 → 相关图表（图题检索）
-async def find_related_figures(text_chunk_id: int, top_k: int = 5):
-    return await db.execute("""
-        SELECT f.*, l.similarity_score
+```go
+// 查询 1: 文本 → 相关图表（图题检索）
+func FindRelatedFigures(ctx context.Context, db *pgxpool.Pool, textChunkID int64, topK int) ([]FigureChunk, error) {
+    return db.Query(ctx, `
+        SELECT f.id, f.caption, l.similarity_score
         FROM chunk_figure_links l
         JOIN figure_chunks f ON l.figure_chunk_id = f.id
         WHERE l.text_chunk_id = $1
         ORDER BY l.similarity_score DESC
         LIMIT $2
-    """, text_chunk_id, top_k)
+    `, textChunkID, topK)
+}
 
-# 查询 2: 图表 → 相关正文（图反查文）
-async def find_related_text(figure_id: int, top_k: int = 5):
-    return await db.execute("""
-        SELECT t.*, l.similarity_score
+// 查询 2: 图表 → 相关正文（图反查文）
+func FindRelatedText(ctx context.Context, db *pgxpool.Pool, figureID int64, topK int) ([]TextChunk, error) {
+    return db.Query(ctx, `
+        SELECT t.id, t.content, l.similarity_score
         FROM chunk_figure_links l
         JOIN text_chunks t ON l.text_chunk_id = t.id
         WHERE l.figure_chunk_id = $1
         ORDER BY l.similarity_score DESC
         LIMIT $2
-    """, figure_id, top_k)
+    `, figureID, topK)
+}
 
-# 查询 3: 跨模态（用图查图、用文查文）
-async def cross_modal_search(figure_id: int, top_k: int = 5):
-    """给一张图，找语义最相关的 5 张其他图"""
-    return await db.execute("""
+// 查询 3: 跨模态（用图查图、用文查文）
+func CrossModalSearch(ctx context.Context, db *pgxpool.Pool, figureID int64, topK int) ([]FigureChunk, error) {
+    return db.Query(ctx, `
         WITH anchor AS (SELECT caption_vec FROM figure_chunks WHERE id = $1)
         SELECT id, caption, 1 - (caption_vec <=> (SELECT caption_vec FROM anchor)) AS score
         FROM figure_chunks
         WHERE id != $1
         ORDER BY caption_vec <=> (SELECT caption_vec FROM anchor)
         LIMIT $2
-    """, figure_id, top_k)
+    `, figureID, topK)
+}
 ```
 
 **索引构建流程**：
 
-```python
-# 文档入库时双写
-async def index_chapter(chapter_id: str, content: str):
-    chunks = split_into_chunks(content, chunk_size=512, overlap=64)
-    for chunk in chunks:
-        # 写入正文指纹
-        await db.execute("""
+```go
+func IndexChapter(ctx context.Context, db *pgxpool.Pool, chapterID, content string) error {
+    chunks := splitIntoChunks(content, 512, 64) // size=512, overlap=64
+    for _, chunk := range chunks {
+        vec, err := embed(ctx, chunk.Text)
+        if err != nil { return err }
+
+        // 1. 写入正文指纹
+        var textChunkID int64
+        err = db.QueryRow(ctx, `
             INSERT INTO text_chunks (doc_id, doc_type, chapter_id, content, content_tsv, content_vec)
             VALUES ($1, 'chapter', $2, $3, to_tsvector('simple', $3), $4)
-        """, chapter_id, chapter_id, chunk.text, await embed(chunk.text))
-        
-        # 解析并关联图表占位符
-        figures = extract_figure_placeholders(chunk.text)
-        for fig in figures:
-            fig_id = await upsert_figure(fig)
-            # 写入图表指纹
-            await db.execute("""
+            RETURNING id
+        `, chapterID, chapterID, chunk.Text, vec).Scan(&textChunkID)
+        if err != nil { return err }
+
+        // 2. 解析图表占位符
+        figures := extractFigurePlaceholders(chunk.Text)
+        for _, fig := range figures {
+            figVec, _ := embed(ctx, fig.Caption)
+            figID, err := upsertFigure(ctx, db, fig)
+            if err != nil { return err }
+
+            // 写入图表指纹
+            _, err = db.Exec(ctx, `
                 INSERT INTO figure_chunks (figure_id, chapter_id, caption, description, caption_tsv, caption_vec)
                 VALUES ($1, $2, $3, $4, to_tsvector('simple', $3), $5)
-                ON CONFLICT (figure_id) DO UPDATE SET caption_vec = $5
-            """, fig_id, chapter_id, fig.caption, chunk.text, await embed(fig.caption))
-            
-            # 关联
-            await db.execute("""
+                ON CONFLICT (figure_id) DO UPDATE SET caption_vec = EXCLUDED.caption_vec
+            `, figID, chapterID, fig.Caption, chunk.Text, figVec)
+            if err != nil { return err }
+
+            // 3. 关联
+            _, err = db.Exec(ctx, `
                 INSERT INTO chunk_figure_links (text_chunk_id, figure_chunk_id, link_type, similarity_score)
                 VALUES ($1, $2, 'describes', $3)
                 ON CONFLICT DO NOTHING
-            """, chunk.id, fig_id, cosine_similarity(chunk.vec, fig.vec))
+            `, textChunkID, figID, cosineSimilarity(vec, figVec))
+            if err != nil { return err }
+        }
+    }
+    return nil
+}
 ```
 
 **性能指标**（10 万条文本 + 5 万张图）：
@@ -780,21 +971,35 @@ async def index_chapter(chapter_id: str, content: str):
 
 ## 8.2 文档预处理
 
-```python
-# 文档统一走 doc2markdown 中间态
-async def ingest_document(path: str) -> Document:
-    if path.endswith('.pdf'):
-        content = await pdf_to_markdown(path)
-    elif path.endswith('.docx'):
-        content = await docx_to_markdown(path)
-    else:
-        content = read_file(path)
-    return Document(
-        path=path,
-        content=content,
-        chunks=split_into_chunks(content),
-        metadata=extract_metadata(path)
-    )
+```go
+type Document struct {
+    Path     string
+    Content  string
+    Chunks   []Chunk
+    Metadata map[string]string
+}
+
+// 文档统一走 doc2markdown 中间态
+func IngestDocument(ctx context.Context, path string) (*Document, error) {
+    var content string
+    var err error
+    switch {
+    case strings.HasSuffix(path, ".pdf"):
+        content, err = pdfToMarkdown(ctx, path)
+    case strings.HasSuffix(path, ".docx"):
+        content, err = docxToMarkdown(ctx, path)
+    default:
+        content, err = readFile(path)
+    }
+    if err != nil { return nil, err }
+
+    return &Document{
+        Path:     path,
+        Content:  content,
+        Chunks:   splitIntoChunks(content, 512, 64),
+        Metadata: extractMetadata(path),
+    }, nil
+}
 ```
 
 ## 8.3 行业适配策略（需求 §4.9-④ + HLD §5.12）
@@ -903,50 +1108,77 @@ entity_types:
 
 **自动识别流程**：
 
-```python
-async def detect_industry(parsed_rfp: ParsedRFP) -> IndustryTag:
-    """从招标文件文本中识别行业"""
-    # 1. 关键词匹配
-    keyword_scores = {}
-    for industry, config in INDUSTRY_CONFIGS.items():
-        score = sum(1 for kw in config['keywords'] if kw in parsed_rfp.raw_text)
-        keyword_scores[industry] = score
-    
-    # 2. LLM 二次确认（低置信度时）
-    top_industry = max(keyword_scores, key=keyword_scores.get)
-    top_score = keyword_scores[top_industry]
-    
-    if top_score < 3:  # 关键词不足，让 LLM 判断
-        industry = await llm_classify_industry(parsed_rfp)
-        return industry
-    
-    return top_industry
+```go
+type IndustryTag string
+
+func DetectIndustry(ctx context.Context, parsed *ParsedRFP, llm LLMRouter) (IndustryTag, error) {
+    // 1. 关键词匹配
+    scores := map[IndustryTag]int{}
+    for ind, cfg := range IndustryConfigs {
+        s := 0
+        for _, kw := range cfg.Keywords {
+            if strings.Contains(parsed.RawText, kw) {
+                s++
+            }
+        }
+        scores[ind] = s
+    }
+
+    // 取 top
+    top, topScore := topIndustry(scores)
+
+    // 2. 关键词不足 → LLM 二次确认
+    if topScore < 3 {
+        industry, err := llmClassifyIndustry(ctx, llm, parsed)
+        if err != nil { return "", err }
+        return industry, nil
+    }
+    return top, nil
+}
+
+func llmClassifyIndustry(ctx context.Context, llm LLMRouter, parsed *ParsedRFP) (IndustryTag, error) {
+    resp, err := llm.Route(ctx, "industry-classify", ChatRequest{
+        Model: "deepseek-v3",
+        System: []SystemBlock{{Text: "你是行业分类专家，只输出行业标签之一：it/construction/government/energy/medical/other"}},
+        Messages: []ChatMessage{{Role: "user", Content: parsed.RawText[:min(len(parsed.RawText), 4000)]}},
+        MaxTokens: 16,
+        Temperature: 0,
+    })
+    if err != nil { return "", err }
+    return IndustryTag(strings.TrimSpace(resp.Content)), nil
+}
 ```
 
 **用户可手动覆盖**：解析完成后 UI 展示识别结果，允许切换。
 
 ---
 
-# 九、客户端（可选）
+# 九、客户端（前端：Node.js 生态）
 
-## 9.1 桌面客户端（参考 openbidkit-yibiao）
+> **前端统一基于 Node.js 运行时**：构建工具（Vite 7、esbuild）、桌面壳（Electron 41）、包管理（pnpm/npm）全部运行在 Node.js 上；浏览器端代码（React/Vue）编译产物仍是 JS/HTML/CSS，但开发与构建链路完全 Node.js 化。
+
+## 9.1 桌面客户端
 
 | 技术 | 用途 |
 |---|---|
-| **Electron 41+** | 跨平台桌面壳 |
+| **Electron 41+** | 跨平台桌面壳（Node.js 主进程 + Chromium 渲染进程） |
 | React 19 + TypeScript 5.9 | UI |
-| Vite 7 | 构建 |
+| Vite 7 | 构建（Node.js + esbuild） |
 | Radix UI / shadcn/ui | 组件库 |
 | Zustand / Redux Toolkit | 状态管理 |
+
+> Electron 的 IPC 桥接允许 Node.js 主进程访问本地文件系统、调用原生能力；UI 仍由 React 在 Chromium 渲染。
 
 ## 9.2 Web 客户端
 
 | 技术 | 用途 |
 |---|---|
-| **React 19 + Vite 7** | SPA |
+| **React 19 + Vite 7** | SPA（Vite dev server 与生产构建均运行在 Node.js 上） |
 | TanStack Query | 服务端状态 |
 | React Router | 路由 |
 | Radix UI | 组件 |
+
+**Node.js 版本要求**：≥ 20 LTS（Vite 7 要求 Node 20.19+ / 22.12+）。
 
 **推荐：MVP 用 Web 优先**（开发快），后续加桌面壳。
 
@@ -958,7 +1190,7 @@ async def detect_industry(parsed_rfp: ParsedRFP) -> IndustryTag:
 
 | 阶段 | 推荐 |
 |---|---|
-| MVP | Docker Compose 单机 |
+| MVP | Docker Compose 单机（Go 后端单二进制 + 前端 Nginx 静态） |
 | 中期 | K8s（minikube → 生产） |
 | 大规模 | 多区域 K8s + CDN |
 
@@ -970,24 +1202,42 @@ async def detect_industry(parsed_rfp: ParsedRFP) -> IndustryTag:
 
 | 维度 | 工具 |
 |---|---|
-| **指标** | Prometheus + Grafana |
-| **日志** | Loki / ELK |
-| **追踪** | OpenTelemetry + Jaeger |
+| **指标** | Prometheus + Grafana（Go 客户端 [`prometheus/client_golang`](https://github.com/prometheus/client_golang)） |
+| **日志** | Loki + Promtail |
+| **追踪** | OpenTelemetry + Jaeger（Go SDK [`otel-go`](https://github.com/open-telemetry/opentelemetry-go)） |
 | **错误** | Sentry |
 
 ## 10.4 CI/CD
 
 **GitHub Actions**（推荐）：
-- PR 检查：lint + type check + test
+- PR 检查：lint + `go vet` + test + type check（前端用 `tsc`）
 - main 合并：自动构建 Docker 镜像 + 部署
 
 ## 10.5 配置管理
 
 | 选项 | 场景 |
 |---|---|
-| 环境变量 | 简单 |
-| **Pydantic Settings** | Python 项目推荐 |
-| Consul / etcd | 分布式 |
+| 环境变量 | 简单（用 [`caarlos0/env`](https://github.com/caarlos0/env) 解析到结构体） |
+| **spf13/viper** | 推荐（YAML/ENV/flags/etcd 全支持，热加载） |
+| **kelseyhightower/envconfig** | 纯环境变量 + struct tag（轻量） |
+| Consul / etcd | 分布式动态配置 |
+
+```go
+type Config struct {
+    HTTPAddr  string        `env:"HTTP_ADDR" envDefault:":8080"`
+    DBURL     string        `env:"DB_URL" envDefault:"postgres://localhost/aitb"`
+    RedisURL  string        `env:"REDIS_URL" envDefault:"redis://localhost:6379"`
+    Anthropic string        `env:"ANTHROPIC_API_KEY,required"`
+    LogLevel  string        `env:"LOG_LEVEL" envDefault:"info"`
+    Timeout   time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s"`
+}
+
+func LoadConfig() (*Config, error) {
+    var c Config
+    if err := env.Parse(&c); err != nil { return nil, err }
+    return &c, nil
+}
+```
 
 ## 10.6 合规认证路径（需求 FR-3.8-C / E + HLD §11.5）
 
@@ -1042,45 +1292,79 @@ vault write transit/decrypt/bid-data ciphertext="vault:v1:..."
 | 备份 | GPG 加密 + 异地存储 |
 
 **应用层加密示例**：
-```python
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-import os
 
-def encrypt_field(plaintext: str, key: bytes) -> str:
-    aesgcm = AESGCM(key)
-    nonce = os.urandom(12)
-    ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-    return f"{nonce.hex()}:{ct.hex()}"
+```go
+import (
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/rand"
+    "encoding/hex"
+    "errors"
+    "io"
+)
 
-def decrypt_field(ciphertext: str, key: bytes) -> str:
-    nonce_hex, ct_hex = ciphertext.split(":")
-    nonce = bytes.fromhex(nonce_hex)
-    ct = bytes.fromhex(ct_hex)
-    return AESGCM(key).decrypt(nonce, ct, None).decode()
+func EncryptField(plaintext string, key []byte) (string, error) {
+    block, err := aes.NewCipher(key)
+    if err != nil { return "", err }
+    aesgcm, err := cipher.NewGCM(block)
+    if err != nil { return "", err }
+    nonce := make([]byte, aesgcm.NonceSize())
+    if _, err := io.ReadFull(rand.Reader, nonce); err != nil { return "", err }
+    ct := aesgcm.Seal(nil, nonce, []byte(plaintext), nil)
+    return hex.EncodeToString(nonce) + ":" + hex.EncodeToString(ct), nil
+}
+
+func DecryptField(ciphertext string, key []byte) (string, error) {
+    parts := strings.SplitN(ciphertext, ":", 2)
+    if len(parts) != 2 { return "", errors.New("invalid ciphertext") }
+    nonce, err := hex.DecodeString(parts[0])
+    if err != nil { return "", err }
+    ct, err := hex.DecodeString(parts[1])
+    if err != nil { return "", err }
+    block, err := aes.NewCipher(key)
+    if err != nil { return "", err }
+    aesgcm, err := cipher.NewGCM(block)
+    if err != nil { return "", err }
+    pt, err := aesgcm.Open(nil, nonce, ct, nil)
+    if err != nil { return "", err }
+    return string(pt), nil
+}
 ```
 
 ### 10.6.4 审计日志
 
-**Loki + 结构化 JSON**：
+**Go `log/slog` + 结构化 JSON**（Go 1.21+ 标准库）：
 
-```python
-import structlog
-import logging
-import sys
-
-# 业务日志全结构化
-structlog.configure(
-    processors=[
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),   # 输出 JSON 给 Loki 抓取
-    ],
-    logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+```go
+import (
+    "log/slog"
+    "os"
 )
 
-log = structlog.get_logger()
-log.info("bid_created", bid_id="b-001", user_id="u-001", industry="it", chapters=50)
+func NewLogger() *slog.Logger {
+    h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+        Level: slog.LevelInfo,
+    })
+    return slog.New(h)
+}
+
+// 使用
+log := NewLogger()
+log.Info("bid_created",
+    "bid_id", "b-001",
+    "user_id", "u-001",
+    "industry", "it",
+    "chapters", 50,
+)
 ```
+
+输出（JSON，每行一条，Promtail 抓取）：
+
+```json
+{"time":"2026-01-15T10:23:45Z","level":"INFO","msg":"bid_created","bid_id":"b-001","user_id":"u-001","industry":"it","chapters":50}
+```
+
+> 若需要更高性能或更丰富的 sink（Kafka、Elasticsearch），可换 [`rs/zerolog`](https://github.com/rs/zerolog)（零分配）或 [`uber-go/zap`](https://github.com/uber-go/zap)。
 
 **审计日志要求**（等保三级）：
 - 保留 ≥ 180 天在线 + 3 年归档
@@ -1140,10 +1424,11 @@ log.info("bid_created", bid_id="b-001", user_id="u-001", industry="it", chapters
 | llama.cpp | 纯 CPU 推理 | 无 GPU 环境 |
 | TensorRT-LLM | NVIDIA 优化 | 高性能 GPU |
 
-**vLLM 部署示例**：
+**vLLM 部署示例**（独立 Python 推理服务，OpenAI 兼容 HTTP，Go 主服务通过 §5 LLM Router 调用）：
+
 ```bash
 # Qwen2.5-72B-Instruct-AWQ
-python -m vllm.entrypoints.api_server \
+python -m vllm.entrypoints.openai.api_server \
     --model Qwen/Qwen2.5-72B-Instruct-AWQ \
     --quantization awq \
     --tensor-parallel-size 2 \
@@ -1152,7 +1437,7 @@ python -m vllm.entrypoints.api_server \
     --port 8001
 
 # Qwen2.5-7B-Instruct（快速任务）
-python -m vllm.entrypoints.api_server \
+python -m vllm.entrypoints.openai.api_server \
     --model Qwen/Qwen2.5-7B-Instruct \
     --port 8002
 ```
@@ -1162,7 +1447,7 @@ python -m vllm.entrypoints.api_server \
 | 图表类型 | 工具 | 替代（公网） |
 |---|---|---|
 | 流程图 / 架构图 | **Mermaid CLI**（本地） | mermaid.ink |
-| 数据图 | **matplotlib + ECharts**（本地导出 PNG/SVG） | - |
+| 数据图 | **go-echarts / gonum/plot**（本地导出 PNG/SVG） | - |
 | 文生图（可选） | **SD 3.5 + diffusers**（本地 LoRA） | DALL-E 3 |
 | OCR | **PaddleOCR**（本地） | 云 OCR |
 
@@ -1185,14 +1470,18 @@ mmdc -i input.mmd -o output.svg -p puppeteerConfig.json
 | **极简**（CPU 32 核） | Qwen2.5-1.5B + llama.cpp | 60% 质量 |
 
 **自适应调度**：
-```python
-def select_model(task_complexity: str, available_gpus: list) -> str:
-    if task_complexity == "high" and len(available_gpus) >= 2:
+
+```go
+func SelectModel(taskComplexity string, availableGPUs int) string {
+    switch {
+    case taskComplexity == "high" && availableGPUs >= 2:
         return "qwen2.5-72b-awq"
-    elif task_complexity == "medium":
+    case taskComplexity == "medium":
         return "qwen2.5-32b-awq"
-    else:
+    default:
         return "qwen2.5-7b-int4"
+    }
+}
 ```
 
 ### 10.7.4 离线升级包
@@ -1326,7 +1615,7 @@ flowchart TB
 | mermaid.ink 不可用 | 本地 mermaid-cli |
 | AI 图风格不一致 | 缓存相似图、固定 prompt 模板 |
 | PostgreSQL 单点 | 主从 + PgBouncer |
-| Celery broker 单点 | Redis Sentinel / Cluster |
+| Asynq broker 单点 | Redis Sentinel / Cluster / 切 River（PG） |
 
 ---
 
@@ -1334,13 +1623,15 @@ flowchart TB
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
-| 后端语言 | Python 3.11+ | AI 生态最强 |
-| Web 框架 | FastAPI | 异步原生、Pydantic 集成 |
-| 任务队列 | Celery | 成熟、retry/canvas 完整 |
-| 数据库 | PostgreSQL 16 | JSONB + advisory lock + tsvector |
+| 后端语言 | **Go 1.23+**（Rust 备选） | I/O 并发优、单二进制、CI 反馈快 |
+| Web 框架 | **Gin**（Fiber 备选） | 生态最大、与 Asynq/GORM 集成最成熟 |
+| 任务队列 | **Asynq**（River 备选） | Go 生态生产级、Redis broker、`asynqmon` UI |
+| ORM | **GORM**（sqlx/pgx 备选） | MVP 速度快；复杂查询用 sqlx/pgx |
+| 数据库 | PostgreSQL 16 | JSONB + advisory lock + tsvector + pgvector |
+| 前端运行时 | **Node.js 20+** | Vite 7 / Electron 41 / 构建工具全栈 Node |
 | 主力模型 | Claude Sonnet 4.6 | 200K 上下文 + cache_control |
 | 成本模型 | DeepSeek 粗稿 + Claude 精稿 | 双层降本 |
-| 文档导出 | python-docx + LibreOffice | 样式一致性 |
+| 文档导出 | unidoc/unioffice + LibreOffice | Go 生态唯一可用 + PDF 兜底 |
 | 部署 | Docker Compose MVP → K8s 后期 | 渐进式 |
 | CI/CD | GitHub Actions | 与仓库集成最好 |
 

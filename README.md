@@ -1,7 +1,6 @@
 # ai_toubiao · AI 标书自动生成系统
 
 > 本仓库承载 **AI 标书自动生成系统** 的产品调研、需求分析与设计文档。
-> 不包含代码实现 —— 代码位于 `OpenBidKit_Yibiao`（Electron 客户端）与 `bidwriter`（Go 后端）。
 
 📘 **在线文档（GitHub Pages）**：<https://growdu.github.io/ai_toubiao/>
 
@@ -17,7 +16,7 @@ flowchart TB
     end
 
     %% API
-    API["API 网关<br/>FastAPI + OpenAPI"]
+    API["API 网关<br/>Gin/Fiber + OpenAPI"]
 
     %% 核心服务
     subgraph SERVICES["核心服务"]
@@ -27,7 +26,7 @@ flowchart TB
     end
 
     %% 任务队列
-    subgraph QUEUES["任务队列（Celery + Redis）"]
+    subgraph QUEUES["任务队列（Asynq + Redis）"]
         QP["planner-q"]
         QC["chapter-q<br/>默认 10 并发"]
         QA["auditor-q"]
@@ -43,7 +42,7 @@ flowchart TB
     subgraph ILL["图表渲染层"]
         M["Mermaid"]
         IAI["DALL-E 3"]
-        MT["matplotlib"]
+        MT["go-echarts"]
         TB["自实现表格"]
     end
 
@@ -135,7 +134,6 @@ flowchart TB
 
 ## 关联仓库
 
-- **OpenBidKit_Yibiao**（Electron 客户端）：`/work/ai/OpenBidKit_Yibiao`
 - **bidwriter**（Go 后端）：`/work/ai/bidwriter`
 
 ## CI
