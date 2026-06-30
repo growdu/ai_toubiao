@@ -1,6 +1,6 @@
 # ai_toubiao · AI 标书自动生成系统
 
-> 本仓库承载 **AI 标书自动生成系统** 的产品调研、需求分析与设计文档。
+> 本仓库承载 **AI 标书自动生成系统** 的产品调研、需求分析、架构设计与后端/前端实现代码。
 
 📘 **在线文档（GitHub Pages）**：<https://growdu.github.io/ai_toubiao/>
 
@@ -16,13 +16,17 @@ flowchart TB
     end
 
     %% API
-    API["API 网关<br/>Gin/Fiber + OpenAPI"]
+    API["API 网关<br/>Gin + JWT + 限流"]
 
     %% 核心服务
     subgraph SERVICES["核心服务"]
         ORCH["编排服务<br/>状态机 + 调度 + HIL"]
-        KB["知识库服务<br/>检索 + 证据链"]
+        KB["知识库服务<br/>检索 + 证据链 + pgvector"]
         DOC["文档服务<br/>Word 模板 + 渲染"]
+        AUDIT["审计服务<br/>合规 + 一致性 + 废标项"]
+        TEMPLATE["模板服务<br/>Word 模板管理"]
+        BILLING["账单服务<br/>预算 + 交易记录"]
+        NOTIFY["通知服务<br/>邮件/钉钉/企微"]
     end
 
     %% 任务队列
@@ -48,7 +52,7 @@ flowchart TB
 
     %% 存储
     subgraph STORE["存储"]
-        PG[("PostgreSQL<br/>元数据 + 索引")]
+        PG[("PostgreSQL<br/>元数据 + 向量")]
         RD[("Redis<br/>队列 + 锁 + 缓存")]
         S3[("S3 / MinIO<br/>章节 + 图表 + Word/PDF")]
     end
@@ -59,6 +63,10 @@ flowchart TB
     API --> ORCH
     API --> DOC
     API --> KB
+    API --> AUDIT
+    API --> TEMPLATE
+    API --> BILLING
+    API --> NOTIFY
 
     ORCH --> QP
     ORCH --> QC
@@ -86,7 +94,91 @@ flowchart TB
 ```
 
 > 主输出格式：**Word（.docx）**，PDF 为衍生品（LibreOffice headless 异步生成）。
-> 完整 ASCII 架构图与组件职责详见 [docs/high-level-design.md §2](docs/high-level-design.md)。
+
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 后端 | Go 1.22 + Gin |
+| 前端 | React 18 + TypeScript + Vite + Tailwind CSS |
+| 数据库 | PostgreSQL + pgvector |
+| 任务队列 | Asynq + Redis |
+| AI 路由 | Anthropic / OpenAI / DeepSeek 多 Provider 路由 |
+| 文档生成 | unioffice (Word) |
+| 图表 | Mermaid + go-echarts |
+| 部署 | Docker Compose |
+
+## 项目结构
+
+```
+ai_toubiao/
+├── backend/                    # Go 后端（微服务）
+│   ├── services/
+│   │   ├── api-gateway/       # API 网关（认证、限流、路由）
+│   │   ├── project-svc/       # 项目管理
+│   │   ├── router-svc/        # AI 路由（多 Provider）
+│   │   ├── workflow-svc/     # 工作流编排（状态机）
+│   │   ├── document-svc/     # 文档解析与导出
+│   │   ├── knowledge-svc/     # 知识库（RAG + pgvector）
+│   │   ├── audit-svc/       # 合规审查
+│   │   ├── template-svc/     # Word 模板管理
+│   │   ├── billing-svc/      # 账单与预算
+│   │   └── notify-svc/       # 通知服务
+│   ├── shared/               # 共享包（db、logger、tenant、httperr）
+│   └── migrations/          # 数据库迁移（goose）
+├── web/                      # React 前端
+│   ├── src/
+│   │   ├── api/             # API 客户端
+│   │   ├── components/      # 通用组件
+│   │   ├── pages/          # 页面
+│   │   │   ├── auth/       # 登录
+│   │   │   ├── bids/        # 标书管理（列表、详情、大纲、章节、审计、导出）
+│   │   │   └── knowledge/  # 知识库
+│   │   ├── lib/             # 状态管理（Zustand）
+│   │   └── hooks/           # 自定义 Hooks
+│   └── package.json
+└── docs/                    # 设计文档
+```
+
+## 服务状态
+
+| 服务 | 状态 | 说明 |
+|------|------|------|
+| api-gateway | 完整 | JWT 认证、限流、路由代理 |
+| project-svc | 完整 | Project CRUD、多租户隔离 |
+| router-svc | 完整 | AI Provider 路由、LRU 缓存 |
+| workflow-svc | 完整 | 状态机、事件溯源 |
+| document-svc | 部分 | 解析完成，存储待实现 S3/MinIO |
+| knowledge-svc | 部分 | 向量搜索待完善 |
+| audit-svc | 完整 | 合规审查、一致性检查、废标项扫描 |
+| template-svc | 完整 | Word 模板 CRUD |
+| billing-svc | 完整 | 预算管理、交易记录 |
+| notify-svc | 完整 | 多渠道通知偏好 |
+
+## 数据库迁移
+
+| 迁移 | 内容 |
+|------|------|
+| 00006 | bid_jobs、chapter_specs、chapter_contents、illustrations、evidence |
+| 00007 | kb_materials、kb_chunks、kb_evidence_links（知识库） |
+| 00008 | audit_reports、audit_issues（审计） |
+| 00009 | word_templates（模板） |
+| 00010 | billing_budgets、billing_transactions（账单） |
+| 00011 | notification_preferences、notification_logs（通知） |
+
+## API 概览
+
+| 端点 | 说明 |
+|------|------|
+| `POST /api/v1/auth/login` | 用户登录 |
+| `GET/POST /api/v1/projects` | 项目管理 |
+| `GET/POST /api/v1/bids` | 标书管理 |
+| `GET /api/v1/bids/:id/outline` | 章节大纲 |
+| `GET /api/v1/bids/:id/chapters` | 章节内容 |
+| `POST/GET /api/v1/audit/bidjobs/:id/report` | 审计报告 |
+| `POST/GET /api/v1/templates` | 模板管理 |
+| `GET/POST /api/v1/billing/budget` | 预算管理 |
+| `POST /api/v1/notifications/send` | 发送通知 |
 
 ## 文档索引
 
@@ -94,73 +186,56 @@ flowchart TB
 
 | 文档 | 内容 |
 |---|---|
-| [docs/requirements-spec.md](docs/requirements-spec.md) | **需求规格说明书 SRS**（9 节）：术语表 / 痛点 / 8 大功能模块 / 非功能 / 9 大技术难点 / 验收 / 风险 / MVP 优先级。研发需求基线 |
-| [docs/diaoyan.md](docs/diaoyan.md) | 调研：行业现状、痛点、机会、目标用户 |
+| [docs/requirements-spec.md](docs/requirements-spec.md) | **需求规格说明书 SRS**（9 节） |
+| [docs/diaoyan.md](docs/diaoyan.md) | 调研：行业现状、痛点、机会 |
 
 ### 设计与架构
 
 | 文档 | 内容 |
 |---|---|
-| [docs/framework.md](docs/framework.md) | 设计纲要：系统目标、核心三要素（AI/章节任务/图表）、状态机、人在回路点 |
-| [docs/tech-selection.md](docs/tech-selection.md) | 技术选型（13 节）：后端 / 队列 / LLM 路由 / 图表 / Word / KB / 编排 / 存储 / 可观测 / 部署 / 成本 / 风险 / 决策 |
-| [docs/high-level-design.md](docs/high-level-design.md) | 概要设计 HLD（15 节）：组件架构、核心流程、**章节划分与调度 ★**、**图表设计与实现 ★**、**Word 输出流水线 ★**、数据模型、接口、算法、可观测、安全、部署 |
-
-### HLD 重点章节速查
-
-| 章节 | 解决的问题 |
-|---|---|
-| §4 章节划分与调度 | 章节怎么分？优先级？依赖？并发？防饿死？ |
-| §5 图表设计与实现 | 图表分几类？怎么定义？怎么渲染？怎么校验？失败怎么办？ |
-| §6 Word 输出流水线 | 为什么 Word 为主？模板怎么用？Markdown 怎么变 docx？图表怎么嵌？ |
-
-### 需求-设计追溯关系
-
-```
-需求书（产品）→ requirements-spec.md（需求基线）
-    → framework.md（设计纲要）
-        → tech-selection.md（技术选型）
-            → high-level-design.md（概要设计）
-                → 详细设计 + 实现
-```
-
-下游文档变更必须反向检查上游；上游变更需评估对所有下游的影响面。
-
-## 关键决策
-
-- **主输出格式**：Word（.docx），PDF 为衍生品（LibreOffice headless 异步生成）
-- **章节任务并发度**：默认 10（章节间并行，章节内串行）
-- **人在回路点**：3 个（章节大纲确认 / 审计问题处理 / 样式微调）
-- **Prompt 缓存**：Anthropic cache_control（系统前缀强缓存，章节规格章节内复用）
-
-## 关联仓库
-
-- **bidwriter**（Go 后端）：`/work/ai/bidwriter`
+| [docs/framework.md](docs/framework.md) | 设计纲要：系统目标、核心三要素 |
+| [docs/tech-selection.md](docs/tech-selection.md) | 技术选型（13 节） |
+| [docs/high-level-design.md](docs/high-level-design.md) | 概要设计 HLD（15 节） |
 
 ## CI
 
 | 检查 | 工具 | 严格度 |
 |---|---|---|
-| 必需文件存在且非空 | shell | 严格（CI 红） |
-| Markdown 风格 | markdownlint-cli2 | 严格（CI 红） |
-| Mermaid 块渲染 | mermaid.js + Chrome | 严格（CI 红） |
-| 链接检查 | lychee | 宽松（仅 Job Summary） |
-
-工作流：`.github/workflows/ci.yml`，对 `push` 到 `main` 与所有 `pull_request` 触发。
+| 必需文件存在且非空 | shell | 严格 |
+| Markdown 风格 | markdownlint-cli2 | 严格 |
+| Mermaid 块渲染 | mermaid.js + Chrome | 严格 |
 
 ## 本地开发
 
-### 校验 Mermaid 图
-
-CI 会自动渲染 README 与 `docs/` 下所有 `mermaid` 代码块；本地开发可在提交前自检：
+### 后端
 
 ```bash
-npm install                    # 首次：安装 mermaid + puppeteer-core
-npm run lint:mermaid           # 校验默认 docs/**/*.md + README.md
-MERMAID_LINT_VERBOSE=1 npm run lint:mermaid   # 打印每个块的行号
-node tools/mermaid-lint.mjs README.md         # 只校验某个文件
+cd backend
+
+# 运行所有服务（Docker Compose）
+docker-compose up
+
+# 或本地运行单个服务
+go run ./services/api-gvc/cmd/api-gateway
+
+# 数据库迁移
+goose -dir migrations postgres "postgres://user:pass@localhost:5432/db" up
 ```
 
-需本机已安装 Chrome / Chromium；非默认路径可用 `MERMAID_LINT_CHROME` 环境变量指定。
+### 前端
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+### 校验 Mermaid 图
+
+```bash
+npm install
+npm run lint:mermaid
+```
 
 ## License
 
