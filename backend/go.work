@@ -6,6 +6,7 @@ use (
 	./services/billing-svc
 	./services/document-svc
 	./services/knowledge-svc
+	./services/notify-svc
 	./services/project-svc
 	./services/router-svc
 	./services/template-svc
