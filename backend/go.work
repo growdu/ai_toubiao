@@ -1,0 +1,11 @@
+go 1.25
+
+use (
+	./services/api-gateway
+	./services/document-svc
+	./services/knowledge-svc
+	./services/project-svc
+	./services/router-svc
+	./services/workflow-svc
+	./shared
+)

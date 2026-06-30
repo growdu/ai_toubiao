@@ -1,0 +1,28 @@
+# Binaries
+bin/
+*.exe
+
+# Build outputs
+site/
+*.o
+*.a
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Test coverage
+coverage.out
+
+# Temporary files
+*.tmp
+*.log

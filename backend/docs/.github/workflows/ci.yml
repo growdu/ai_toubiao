@@ -1,0 +1,414 @@
+name: CI
+
+# 'on' 必须加引号 —— PyYAML 会把裸的 on 解析为 Python True
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 取消同一 PR/分支的前序运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 默认权限：只读（针对外部 PR）
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.23'
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+jobs:
+  # =============================================================
+  # Job 0: 变更路径检测
+  # =============================================================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs: ${{ steps.filter.outputs.docs }}
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
+      any: ${{ steps.filter.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            docs:
+              - 'docs/**'
+              - 'mkdocs.yml'
+              - '**.md'
+            go:
+              - 'services/**'
+              - 'shared/**'
+              - 'migrations/**'
+              - 'go.mod'
+              - 'go.sum'
+              - '.golangci.yml'
+            web:
+              - 'web/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - '.eslintrc*'
+              - 'tsconfig.json'
+            any:
+              - '**'
+
+  # =============================================================
+  # Job 1: 文档检查（任何 PR 必跑）
+  # =============================================================
+  docs-check:
+    name: Docs Lint & Link Check
+    runs-on: ubuntu-latest
+    needs: changes
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install mkdocs
+        run: |
+          pip install mkdocs==1.6.0
+          pip install mkdocs-material==9.5.0
+          pip install pymdown-extensions==10.7
+          pip install mkdocs-mermaid2-plugin==1.1.2
+
+      - name: Build docs (strict mode)
+        run: |
+          mkdocs build --strict --clean
+
+      - name: Markdown lint
+        uses: DavidAnson/markdownlint-cli2@v0.14.0
+        with:
+          globs: |
+            **/*.md
+          config: |
+            {
+              "default": true,
+              "MD013": false,
+              "MD033": false,
+              "MD041": false,
+              "MD024": { "siblings_only": true }
+            }
+          ignores: |
+            node_modules/**
+            .venv/**
+            .git/**
+            docs/architecture/framework.md
+            docs/plan/v1-design.md
+
+      - name: Check docs-first rule
+        run: |
+          # 强规则：代码 PR 必须包含 docs/ 改动
+          # 例外：纯 docs/ PR、纯依赖更新、热修复
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            HAS_CODE=$(gh pr view ${{ github.event.pull_request.number }} --json files --jq '[.files[] | select(.path | startswith("docs/") | not) | select(.path | test("(go|ts|tsx|js|jsx|py|sql)$"))] | length')
+            HAS_DOCS=$(gh pr view ${{ github.event.pull_request.number }} --json files --jq '[.files[] | select(.path | startswith("docs/") or (.path | endswith(".md")))] | length')
+            echo "Code files changed: $HAS_CODE"
+            echo "Doc files changed: $HAS_DOCS"
+            # 如果改了代码但没改文档，警告（不阻止，由 reviewer 判断）
+            if [ "$HAS_CODE" -gt 0 ] && [ "$HAS_DOCS" -eq 0 ]; then
+              echo "::warning::Code changes without docs update. Please ensure docs are updated or explain why in PR description."
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =============================================================
+  # Job 2: Go 后端测试
+  # =============================================================
+  go-test:
+    name: Go Test & Build
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - project-svc
+          - document-svc
+          - workflow-svc
+          - knowledge-svc
+          - router-svc
+          - template-svc
+          - billing-svc
+          - notify-svc
+          - audit-svc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+
+      - name: Download Go modules
+        working-directory: services/${{ matrix.service }}
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Lint
+        working-directory: services/${{ matrix.service }}
+        run: |
+          if [ -f .golangci.yml ] || [ -f .golangci.yaml ]; then
+            golangci-lint run --timeout=5m ./...
+          else
+            go vet ./...
+            gofmt -l .
+          fi
+
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        run: |
+          go test -race -timeout=10m -coverprofile=coverage.out -covermode=atomic ./...
+          go test -race -timeout=10m -tags=integration ./test/integration/... || true
+
+      - name: Build
+        working-directory: services/${{ matrix.service }}
+        run: |
+          go build -v -o bin/${{ matrix.service }} ./cmd/${{ matrix.service }}
+
+      - name: Upload coverage
+        if: matrix.service == 'api-gateway'
+        uses: codecov/codecov-action@v4
+        with:
+          files: services/${{ matrix.service }}/coverage.out
+          flags: ${{ matrix.service }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # =============================================================
+  # Job 3: Web 前端测试
+  # =============================================================
+  web-test:
+    name: Web Lint & Build
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.any == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        working-directory: web
+        run: pnpm typecheck
+
+      - name: Lint
+        working-directory: web
+        run: pnpm lint
+
+      - name: Test
+        working-directory: web
+        run: pnpm test -- --coverage
+
+      - name: Build
+        working-directory: web
+        run: pnpm build
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          directory: web/coverage
+          flags: web
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # =============================================================
+  # Job 4: SQL 迁移检查
+  # =============================================================
+  sql-check:
+    name: SQL Migration Check
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.any == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Postgres
+        uses: harmonin/postgresql-action@v1
+        with:
+          postgresql version: '16'
+          postgresql db: bidwriter_test
+          postgresql user: postgres
+          postgresql password: postgres
+
+      - name: Check migration ordering
+        run: |
+          # 检查迁移文件按顺序命名
+          ls migrations/*.sql | sort
+          # 检查没有重复前缀
+          ls migrations/*.sql | awk -F'_' '{print $1}' | sort | uniq -c | awk '$1>1 {print "DUPLICATE: "$0; exit 1}'
+
+      - name: Apply migrations
+        run: |
+          if [ -f Makefile ] && grep -q "migrate-up" Makefile; then
+            make migrate-up
+          else
+            # 用 psql 简单应用
+            for f in $(ls migrations/*.sql | sort); do
+              echo "Applying $f"
+              PGPASSWORD=postgres psql -h localhost -U postgres -d bidwriter_test -f "$f" || exit 1
+            done
+          fi
+
+      - name: Verify sqlc
+        run: |
+          if [ -d services/api-gateway ]; then
+            cd services/api-gateway
+            if command -v sqlc &> /dev/null && [ -f sqlc.yaml ]; then
+              sqlc vet
+              sqlc generate
+              git diff --exit-code internal/db/ || echo "::warning::Generated sqlc code changed. Run sqlc generate locally and commit."
+            fi
+          fi
+
+  # =============================================================
+  # Job 5: Docker 构建检查（仅 main）
+  # =============================================================
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    needs: [go-test, web-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - project-svc
+          - document-svc
+          - workflow-svc
+          - knowledge-svc
+          - router-svc
+          - template-svc
+          - billing-svc
+          - notify-svc
+          - audit-svc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          file: services/${{ matrix.service }}/Dockerfile
+          push: false
+          tags: bidwriter/${{ matrix.service }}:test
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+  # =============================================================
+  # Job 6: 集成测试（仅 main，需要数据库）
+  # =============================================================
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [go-test, sql-check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: bidwriter_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/bidwriter_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Apply migrations
+        run: |
+          for f in $(ls migrations/*.sql | sort); do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d bidwriter_test -f "$f"
+          done
+
+      - name: Run integration tests
+        run: |
+          for svc in services/*/; do
+            if [ -d "$svc/test/integration" ]; then
+              echo "Testing $svc"
+              cd "$svc"
+              go test -tags=integration -timeout=15m ./test/integration/... || exit 1
+              cd ../..
+            fi
+          done
+
+  # =============================================================
+  # Job 7: 总结（必需，让 PR 检查有结论）
+  # =============================================================
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [docs-check, go-test, web-test, sql-check]
+    if: always()
+    steps:
+      - name: Check all passed
+        run: |
+          if [ "${{ needs.docs-check.result }}" != "success" ] || \
+             [ "${{ needs.go-test.result }}" != "success" ] && [ "${{ needs.go-test.result }}" != "skipped" ] || \
+             [ "${{ needs.web-test.result }}" != "success" ] && [ "${{ needs.web-test.result }}" != "skipped" ] || \
+             [ "${{ needs.sql-check.result }}" != "success" ] && [ "${{ needs.sql-check.result }}" != "skipped" ]; then
+            echo "One or more CI checks failed."
+            exit 1
+          fi
+          echo "All required CI checks passed."

@@ -1,0 +1,78 @@
+# routes.yaml — canonical AI routing table for bidwriter.
+#
+# Loaded at router-svc startup from $ROUTES_CONFIG_PATH (default: configs/routes.yaml).
+# Hot-reload is not yet implemented; restart the service to apply changes.
+#
+# Schema (excerpt):
+#   routes:
+#     - task: <string>            # required, must match model.Task values
+#       primary: { provider, model, max_cost_usd? }
+#       fallback: [ { provider, model, max_cost_usd? }, ... ]
+#       budget: { max_input_tokens, max_cost_usd, timeout_seconds }
+#       cache:  { enabled, ttl_seconds }
+
+version: 1
+
+routes:
+  # 招标文件解析 — highest quality, large context.
+  - task: rfp_parse
+    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    fallback:
+      - { provider: openai,    model: gpt-4o }
+      - { provider: deepseek,  model: deepseek-chat }
+    budget: { max_input_tokens: 100000, max_cost_usd: 0.50, timeout_seconds: 120 }
+    cache:  { enabled: true, ttl_seconds: 86400 }
+
+  # 大纲生成 — cost-sensitive, medium quality.
+  - task: outline_generate
+    primary: { provider: deepseek, model: deepseek-chat }
+    fallback:
+      - { provider: openai, model: gpt-4o-mini }
+    budget: { max_input_tokens: 30000, max_cost_usd: 0.05, timeout_seconds: 60 }
+    cache:  { enabled: true, ttl_seconds: 43200 }
+
+  # 正文生成 — highest quality, no caching (every section is unique).
+  - task: content_generate
+    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    fallback:
+      - { provider: openai, model: gpt-4o }
+    budget: { max_input_tokens: 50000, max_cost_usd: 0.30, timeout_seconds: 180 }
+    cache:  { enabled: false }
+
+  # 一致性审计 — large context, fast turnaround.
+  - task: audit_normal
+    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    fallback:
+      - { provider: openai, model: gpt-4o }
+    budget: { max_input_tokens: 200000, max_cost_usd: 0.80, timeout_seconds: 180 }
+    cache:  { enabled: false }
+
+  # 一致性审计 agent — must NOT fall back; user retries on failure.
+  - task: audit_agent
+    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    fallback: []
+    budget: { max_input_tokens: 500000, max_cost_usd: 5.00, timeout_seconds: 600 }
+    cache:  { enabled: false }
+
+  # 配图 — image generation.
+  - task: image_generate
+    primary: { provider: openai, model: dall-e-3 }
+    fallback:
+      - { provider: stability, model: sd3-large }
+    budget: { max_cost_usd: 0.20, timeout_seconds: 60 }
+    cache:  { enabled: true, ttl_seconds: 604800 }
+
+  # Embedding — for knowledge-svc.
+  - task: embed
+    primary: { provider: openai, model: text-embedding-3-small }
+    fallback: []
+    budget: { max_input_tokens: 8000, max_cost_usd: 0.001, timeout_seconds: 30 }
+    cache:  { enabled: true, ttl_seconds: 2592000 }
+
+  # Generic chat — default for any unrecognized task.
+  - task: generic
+    primary: { provider: deepseek, model: deepseek-chat }
+    fallback:
+      - { provider: openai, model: gpt-4o-mini }
+    budget: { max_input_tokens: 16000, max_cost_usd: 0.05, timeout_seconds: 60 }
+    cache:  { enabled: false }

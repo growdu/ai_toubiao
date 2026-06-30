@@ -1,0 +1,130 @@
+# BidWriter local development stack.
+# Usage:  docker compose -f docker/docker-compose.yml up
+#
+# Services:
+#   postgres       - PostgreSQL 16 with all migrations applied at startup
+#   api-gateway    - port 8080 (public-facing)
+#   project-svc    - internal
+#   document-svc   - internal
+#   workflow-svc   - internal
+#   router-svc     - internal (AI model routing)
+#
+# Storage is mounted from ./volumes/ to /var/lib/bidwriter/{storage,pg}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bidwriter-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bidwriter
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+      - ../volumes/pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/api-gateway
+        SERVICE_NAME: api-gateway
+    container_name: bidwriter-gateway
+    environment:
+      DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+      PROJECT_SVC_URL: http://project-svc:8080
+      DOCUMENT_SVC_URL: http://document-svc:8080
+      WORKFLOW_SVC_URL: http://workflow-svc:8080
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  project-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/project-svc
+        SERVICE_NAME: project-svc
+    container_name: bidwriter-project-svc
+    environment:
+      DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  document-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/document-svc
+        SERVICE_NAME: document-svc
+    container_name: bidwriter-document-svc
+    environment:
+      DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+      STORAGE_KIND: local
+      STORAGE_DSN: /var/lib/bidwriter/storage
+    volumes:
+      - ../volumes/storage:/var/lib/bidwriter/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  workflow-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/workflow-svc
+        SERVICE_NAME: workflow-svc
+    container_name: bidwriter-workflow-svc
+    environment:
+      DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  router-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/router-svc
+        SERVICE_NAME: router-svc
+    container_name: bidwriter-router-svc
+    environment:
+      DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+      # AI providers (override in .env). Empty key disables that provider at boot.
+      ANTHROPIC_API_KEY: ""
+      OPENAI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+      OLLAMA_BASE_URL: ""
+      # Permissive auth for local/dev. In prod, set JWT_SECRET and AUTH_REQUIRED=true.
+      AUTH_REQUIRED: "false"
+      LOG_LEVEL: "info"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped

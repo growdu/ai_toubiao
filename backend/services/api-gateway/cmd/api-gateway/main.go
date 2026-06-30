@@ -1,0 +1,305 @@
+// api-gateway is the single public entry point for BidWriter.
+//
+// Responsibilities:
+//   - JWT login + refresh
+//   - Per-tenant rate limiting
+//   - Reverse-proxying /api/v1/* to upstream services
+//   - Request ID propagation
+//   - CORS for the web frontend
+//
+// Routing table:
+//   POST /api/v1/auth/login         -> handled locally (DB lookup)
+//   POST /api/v1/auth/refresh       -> handled locally
+//   /api/v1/projects/*              -> project-svc
+//   /api/v1/documents/*             -> document-svc (TODO)
+//   /api/v1/workflows/*             -> workflow-svc
+//   /api/v1/knowledge/*             -> knowledge-svc (TODO)
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/bidwriter/services/api-gateway/internal/auth"
+	"github.com/bidwriter/services/api-gateway/internal/config"
+	"github.com/bidwriter/services/api-gateway/internal/proxy"
+	"github.com/bidwriter/services/api-gateway/internal/ratelimit"
+	"github.com/bidwriter/shared/pkg/db"
+	"github.com/bidwriter/shared/pkg/httperr"
+	sharedlogger "github.com/bidwriter/shared/pkg/logger"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
+	log := sharedlogger.New("api-gateway")
+	slog.SetDefault(log)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	pool, err := db.New(ctx, db.DefaultConfig(cfg.DBDSN))
+	if err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	defer pool.Close()
+	log.Info("db connected")
+
+	authSvc := auth.New(pool, cfg.JWTSecret, cfg.JWTTTL, cfg.RefreshTTL)
+	limiter := ratelimit.New(cfg.RateLimitPerMin, time.Minute)
+
+	mux := http.NewServeMux()
+
+	// ---- Auth endpoints (unauthenticated) ----
+	mux.HandleFunc("/api/v1/auth/login", loginHandler(authSvc, log))
+	mux.HandleFunc("/api/v1/auth/refresh", refreshHandler(authSvc))
+
+	// ---- Health ----
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// ---- Protected proxy routes ----
+	projectURL, err := url.Parse(cfg.ProjectSvcURL)
+	if err != nil {
+		return fmt.Errorf("PROJECT_SVC_URL: %w", err)
+	}
+	documentURL, err := url.Parse(cfg.DocumentSvcURL)
+	if err != nil {
+		return fmt.Errorf("DOCUMENT_SVC_URL: %w", err)
+	}
+	workflowURL, err := url.Parse(cfg.WorkflowSvcURL)
+	if err != nil {
+		return fmt.Errorf("WORKFLOW_SVC_URL: %w", err)
+	}
+
+	routes := []proxy.Route{
+		{Prefix: "/api/v1/projects", Upstream: projectURL},
+		{Prefix: "/api/v1/documents", Upstream: documentURL},
+		{Prefix: "/api/v1/workflows", Upstream: workflowURL},
+	}
+	proxiedHandler := proxy.New(routes)
+	proxyWithAuth := authMiddleware(authSvc, limiter, proxiedHandler, log)
+
+	// Mount under chi for nicer routing
+	r := chi.NewRouter()
+	r.Use(corsMiddleware)
+	r.Handle("/api/v1/auth/*", mux)
+	r.HandleFunc("/api/v1/auth/login", loginHandler(authSvc, log))
+	r.HandleFunc("/api/v1/auth/refresh", refreshHandler(authSvc))
+	r.Handle("/healthz", mux)
+	r.Handle("/api/v1/projects", proxyWithAuth)
+	r.Handle("/api/v1/projects/*", proxyWithAuth)
+	r.Handle("/api/v1/documents", proxyWithAuth)
+	r.Handle("/api/v1/documents/*", proxyWithAuth)
+	r.Handle("/api/v1/workflows", proxyWithAuth)
+	r.Handle("/api/v1/workflows/*", proxyWithAuth)
+	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		http.NotFound(w, req)
+	})
+
+	handler := requestIDMiddleware(log, r)
+
+	srv := &http.Server{
+		Addr:         cfg.HTTPAddr,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Info("listening", slog.String("addr", cfg.HTTPAddr))
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case err := <-serverErr:
+		return fmt.Errorf("server: %w", err)
+	case <-ctx.Done():
+		log.Info("shutdown signal received")
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	return srv.Shutdown(shutdownCtx)
+}
+
+// ---- middleware ----
+
+func requestIDMiddleware(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := r.Header.Get("X-Request-ID")
+		if rid == "" {
+			rid = uuid.NewString()
+		}
+		w.Header().Set("X-Request-ID", rid)
+		ctx := sharedlogger.WithRequest(r.Context(), rid)
+		start := time.Now()
+		next.ServeHTTP(w, r.WithContext(ctx))
+		log.Info("http",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Duration("dur", time.Since(start)),
+			slog.String("rid", rid),
+		)
+	})
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func authMiddleware(svc *auth.Service, limiter *ratelimit.Limiter, next http.Handler, log *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := sharedlogger.RequestIDFrom(r.Context())
+		h := r.Header.Get("Authorization")
+		if h == "" {
+			httperr.Unauthorized(w, rid)
+			return
+		}
+		parts := strings.SplitN(h, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			httperr.Unauthorized(w, rid)
+			return
+		}
+		claims, err := svc.Verify(parts[1])
+		if err != nil {
+			httperr.Unauthorized(w, rid)
+			return
+		}
+
+		// Rate limit per tenant
+		if !limiter.Allow(claims.TenantID) {
+			httperr.Write(w, http.StatusTooManyRequests, httperr.CodeRateLimited,
+				"请求过于频繁", rid, nil)
+			return
+		}
+
+		// Propagate user identity to upstream
+		r.Header.Set("X-Tenant-ID", claims.TenantID)
+		r.Header.Set("X-User-ID", claims.UserID)
+		r.Header.Set("X-User-Role", claims.Role)
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ---- handlers ----
+
+func loginHandler(svc *auth.Service, log *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rid := sharedlogger.RequestIDFrom(r.Context())
+		var req struct {
+			TenantSlug string `json:"tenant_slug"`
+			Email      string `json:"email"`
+			Password   string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httperr.InvalidInput(w, rid, "invalid JSON", nil)
+			return
+		}
+		if req.TenantSlug == "" || req.Email == "" || req.Password == "" {
+			httperr.InvalidInput(w, rid, "tenant_slug, email, password are required", nil)
+			return
+		}
+
+		user, err := svc.Login(r.Context(), req.TenantSlug, req.Email, req.Password)
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			httperr.Write(w, http.StatusUnauthorized, httperr.CodeUnauthorized,
+				"邮箱或密码错误", rid, nil)
+			return
+		}
+		if err != nil {
+			log.Error("login failed", slog.String("err", err.Error()))
+			httperr.InternalError(w, rid)
+			return
+		}
+
+		access, refresh, ttl, err := svc.IssueTokens(user)
+		if err != nil {
+			log.Error("issue tokens", slog.String("err", err.Error()))
+			httperr.InternalError(w, rid)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"access_token":  access,
+			"refresh_token": refresh,
+			"expires_in":    ttl,
+			"token_type":    "Bearer",
+			"user": map[string]any{
+				"id":    user.ID,
+				"email": user.Email,
+				"role":  user.Role,
+			},
+		})
+	}
+}
+
+func refreshHandler(svc *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rid := sharedlogger.RequestIDFrom(r.Context())
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {
+			httperr.InvalidInput(w, rid, "refresh_token required", nil)
+			return
+		}
+
+		// For now, accept any refresh token signed by us (verified loosely).
+		// In production, maintain a refresh-token table for revocation.
+		// Reuse IssueTokens by re-verifying the refresh token.
+		// (Implementation simplified: we accept the existing user identity from the refresh claim.)
+		_ = svc // TODO proper refresh-token revocation list
+
+		w.WriteHeader(http.StatusNotImplemented)
+		writeJSON(w, http.StatusNotImplemented, map[string]any{
+			"error": map[string]any{
+				"code":    "NOT_IMPLEMENTED",
+				"message": "refresh token flow is TODO (need revocation list)",
+			},
+		})
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}

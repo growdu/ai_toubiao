@@ -1,0 +1,374 @@
+openapi: 3.0.3
+info:
+  title: BidWriter API
+  version: 0.1.0
+  description: |
+    AI 标书自动撰写系统 API。
+
+    本规范定义 HTTP 接口的请求/响应格式、错误码、认证方式。
+    每个微服务都有自己的子路径（`/api/v1/projects` 等），
+    实际部署由 `api-gateway` 统一对外暴露。
+
+    参考文档：
+    - API 概览: https://yourorg.github.io/bidwriter/api/overview/
+    - 认证: https://yourorg.github.io/bidwriter/api/authentication/
+    - 错误码: https://yourorg.github.io/bidwriter/api/errors/
+
+servers:
+  - url: https://api.bidwriter.com/api/v1
+    description: 生产
+  - url: http://localhost:8080/api/v1
+    description: 本地开发（api-gateway）
+
+# ============================================================================
+# Security
+# ============================================================================
+security:
+  - bearerAuth: []
+
+# ============================================================================
+# Tags
+# ============================================================================
+tags:
+  - name: auth
+    description: 认证（api-gateway）
+  - name: projects
+    description: 项目管理（project-svc）
+  - name: documents
+    description: 文档管理（document-svc）— TODO
+  - name: workflows
+    description: 工作流（workflow-svc）— TODO
+  - name: knowledge
+    description: 知识库（knowledge-svc）— TODO
+
+# ============================================================================
+# Paths
+# ============================================================================
+paths:
+  # -------- Health (unauthenticated) ----------------------------------------
+  /healthz:
+    get:
+      summary: Liveness probe
+      tags: [projects]
+      security: []
+      responses:
+        '200':
+          description: Service alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      tags: [projects]
+      security: []
+      responses:
+        '200':
+          description: Service ready (DB reachable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ready }
+
+  # -------- Auth (api-gateway, examples) -----------------------------------
+  /auth/login:
+    post:
+      summary: 邮箱密码登录
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /auth/refresh:
+    post:
+      summary: 刷新 token
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: 新 token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+
+  # -------- Projects (project-svc) ------------------------------------------
+  /projects:
+    get:
+      summary: 列出当前租户的项目
+      tags: [projects]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: cursor
+          description: 上一页最后一项的 ID
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, active, completed, archived]
+      responses:
+        '200':
+          description: 项目列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Project' }
+                  meta:
+                    type: object
+                    properties:
+                      count: { type: integer }
+                      next_cursor: { type: string, format: uuid, nullable: true }
+
+    post:
+      summary: 创建项目
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectCreate' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+
+  /projects/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+
+    get:
+      summary: 获取项目详情
+      tags: [projects]
+      responses:
+        '200':
+          description: 项目详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: 部分更新（乐观锁）
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectUpdate' }
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionConflict'
+
+    delete:
+      summary: 软删除
+      tags: [projects]
+      responses:
+        '204':
+          description: 删除成功
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# ============================================================================
+# Components
+# ============================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:           { type: string, example: NOT_FOUND }
+        message:        { type: string, example: 项目不存在 }
+        details:        { type: object, additionalProperties: true }
+        request_id:     { type: string, format: uuid }
+        documentation_url: { type: string, format: uri }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: '#/components/schemas/Error' }
+
+    LoginRequest:
+      type: object
+      required: [tenant_slug, email, password]
+      properties:
+        tenant_slug: { type: string, example: demo-a }
+        email:       { type: string, format: email }
+        password:    { type: string, format: password }
+
+    LoginResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in, user]
+      properties:
+        access_token:  { type: string }
+        refresh_token: { type: string }
+        expires_in:    { type: integer, example: 3600 }
+        token_type:    { type: string, example: Bearer }
+        user:
+          type: object
+          properties:
+            id:    { type: string, format: uuid }
+            email: { type: string }
+            role:  { type: string, enum: [owner, admin, member, viewer] }
+
+    Project:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        tenant_id:       { type: string, format: uuid }
+        name:            { type: string }
+        description:     { type: string, nullable: true }
+        industry:        { type: string, nullable: true }
+        template_id:     { type: string, format: uuid, nullable: true }
+        status:
+          type: string
+          enum: [draft, active, completed, archived]
+        estimated_value: { type: number, nullable: true }
+        currency:        { type: string, example: CNY }
+        deadline:        { type: string, format: date-time, nullable: true }
+        owner_id:        { type: string, format: uuid }
+        version:         { type: integer, example: 1 }
+        created_at:      { type: string, format: date-time }
+        updated_at:      { type: string, format: date-time }
+
+    ProjectCreate:
+      type: object
+      required: [name]
+      properties:
+        name:            { type: string, minLength: 1, maxLength: 256 }
+        description:     { type: string, maxLength: 2000 }
+        industry:        { type: string, maxLength: 64 }
+        template_id:     { type: string, format: uuid }
+        estimated_value: { type: number, minimum: 0 }
+        currency:        { type: string, minLength: 3, maxLength: 3, default: CNY }
+        deadline:        { type: string, format: date-time }
+
+    ProjectUpdate:
+      type: object
+      required: [version]
+      properties:
+        name:            { type: string, minLength: 1, maxLength: 256 }
+        description:     { type: string, maxLength: 2000 }
+        industry:        { type: string, maxLength: 64 }
+        status:
+          type: string
+          enum: [draft, active, completed, archived]
+        estimated_value: { type: number, minimum: 0 }
+        currency:        { type: string, minLength: 3, maxLength: 3 }
+        deadline:        { type: string, format: date-time }
+        version:         { type: integer, minimum: 1, description: 乐观锁版本号 }
+
+  responses:
+    Unauthorized:
+      description: 未认证
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: 缺少或无效的 token
+    Forbidden:
+      description: 无权访问
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error: { code: NOT_FOUND, message: 项目不存在 }
+    InvalidInput:
+      description: 参数无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error:
+              code: INVALID_INPUT
+              message: "field \"name\" failed validation: required"
+    VersionConflict:
+      description: 版本冲突（乐观锁失败）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error: { code: VERSION_CONFLICT, message: 版本冲突，请刷新后重试 }
+    RateLimited:
+      description: 触发限流
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error: { code: RATE_LIMITED, message: 请求过于频繁 }

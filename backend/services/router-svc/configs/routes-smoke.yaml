@@ -1,0 +1,56 @@
+# routes-smoke.yaml — dev/test routing table that uses the in-process MockProvider.
+#
+# Loaded only when router-svc is started with:
+#   ROUTES_CONFIG_PATH=configs/routes-smoke.yaml ALLOW_MOCK_PROVIDER=true
+#
+# This file is for LOCAL SMOKE TESTS only (e.g. verifying the OpenBidKit_Yibiao
+# Electron client can talk to router-svc end-to-end without burning real LLM
+# credits). Production deployments MUST use configs/routes.yaml, which points
+# at anthropic/openai/deepseek.
+#
+# The mock provider echoes back the user's last message prefixed with
+# "[mock:<task>]" so the caller can prove the router dispatched the request to
+# the right task route, and so log assertions can verify task routing.
+
+version: 1
+
+routes:
+  - task: rfp_parse
+    primary: { provider: mock, model: mock-rfp }
+    budget: { max_input_tokens: 100000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: true, ttl_seconds: 60 }
+
+  - task: outline_generate
+    primary: { provider: mock, model: mock-outline }
+    budget: { max_input_tokens: 30000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: true, ttl_seconds: 60 }
+
+  - task: content_generate
+    primary: { provider: mock, model: mock-content }
+    budget: { max_input_tokens: 50000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: false }
+
+  - task: audit_normal
+    primary: { provider: mock, model: mock-audit }
+    budget: { max_input_tokens: 200000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: false }
+
+  - task: audit_agent
+    primary: { provider: mock, model: mock-audit-agent }
+    budget: { max_input_tokens: 200000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: false }
+
+  - task: image_generate
+    primary: { provider: mock, model: mock-image }
+    budget: { max_input_tokens: 1000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: false }
+
+  - task: embed
+    primary: { provider: mock, model: mock-embed }
+    budget: { max_input_tokens: 8000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: true, ttl_seconds: 60 }
+
+  - task: generic
+    primary: { provider: mock, model: mock-generic }
+    budget: { max_input_tokens: 8000, max_cost_usd: 0.01, timeout_seconds: 10 }
+    cache:  { enabled: true, ttl_seconds: 60 }

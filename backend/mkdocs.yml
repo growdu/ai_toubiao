@@ -1,0 +1,146 @@
+site_name: BidWriter 文档
+site_description: AI 标书自动撰写系统 — 架构、计划、决策、开发、运维
+site_url: https://yourorg.github.io/bidwriter/
+repo_url: https://github.com/yourorg/bidwriter
+repo_name: yourorg/bidwriter
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+  font:
+    text: Noto Sans SC
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/css/extra.css
+
+extra_javascript:
+  - assets/js/mermaid-init.js
+
+plugins:
+  - search
+  - mermaid2
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - meta
+
+nav:
+  - 首页: index.md
+  - 产品介绍:
+      - 产品概览: introduction/overview.md
+      - 目标用户: introduction/users.md
+      - 与同类产品差异: introduction/comparison.md
+  - 架构:
+      - 架构总览: architecture/overview.md
+      - 设计框架: architecture/framework.md
+      - 模块设计: architecture/modules.md
+      - 数据模型: architecture/data-model.md
+      - AI 路由: architecture/ai-router.md
+      - 状态机: architecture/state-machine.md
+  - 计划:
+      - v1 设计: plan/v1-design.md
+      - 7 个决策: plan/open-questions-decisions.md
+      - 迭代路线: plan/roadmap.md
+  - 决策记录（ADR）:
+      - ADR 索引: decisions/README.md
+      - 0001 多租户隔离: decisions/0001-multi-tenant.md
+      - 0002 模型路由: decisions/0002-ai-router-quality.md
+      - 0003 私有化模型: decisions/0003-self-hosted-model.md
+      - 0004 Word 格式: decisions/0004-word-format.md
+      - 0005 审计模式: decisions/0005-audit-agent-mode.md
+      - 0006 模板市集: decisions/0006-template-marketplace.md
+      - 0007 数据同步: decisions/0007-data-sync.md
+  - 开发:
+      - 快速开始: development/getting-started.md
+      - 开发流程（先文档）: development/workflow.md
+      - 文档规范: development/documentation-style.md
+      - 代码规范: development/coding-standards.md
+      - 测试规范: development/testing.md
+      - Git 工作流: development/git-workflow.md
+  - 运维:
+      - 部署指南: operations/deployment.md
+      - 监控告警: operations/monitoring.md
+      - 故障排查: operations/troubleshooting.md
+      - 安全合规: operations/security.md
+  - API:
+      - API 概览: api/overview.md
+      - 认证: api/authentication.md
+      - 错误码: api/errors.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yourorg/bidwriter
+      name: GitHub
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/yourorg
+      name: Discord
+  generator: false
+
+copyright: Copyright © 2026 BidWriter Team · AGPL-3.0

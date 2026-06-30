@@ -1,0 +1,55 @@
+# CODEOWNERS
+
+# 每个改动都会自动 @ 对应的 reviewer
+
+# 顶级 maintainer（默认 reviewer）
+*                          @bidwriter/maintainers
+
+# 文档
+/AGENTS.md                 @bidwriter/maintainers @bidwriter/docs-team
+/CONTRIBUTING.md           @bidwriter/maintainers @bidwriter/docs-team
+/docs/                     @bidwriter/docs-team
+/README.md                 @bidwriter/maintainers
+/mkdocs.yml                @bidwriter/docs-team
+
+# 后端服务
+/services/api-gateway/     @bidwriter/backend-leads @bidwriter/auth-team
+/services/project-svc/     @bidwriter/backend-leads
+/services/document-svc/    @bidwriter/backend-leads @bidwriter/ai-team
+/services/workflow-svc/    @bidwriter/backend-leads @bidwriter/ai-team
+/services/knowledge-svc/   @bidwriter/backend-leads @bidwriter/ai-team
+/services/router-svc/      @bidwriter/ai-team
+/services/template-svc/    @bidwriter/backend-leads
+/services/billing-svc/     @bidwriter/backend-leads
+/services/notify-svc/      @bidwriter/backend-leads
+/services/audit-svc/       @bidwriter/ai-team @bidwriter/backend-leads
+
+# 共享 / 数据库
+/shared/                   @bidwriter/backend-leads
+/migrations/               @bidwriter/backend-leads
+/go.mod                    @bidwriter/backend-leads
+
+# 前端
+/web/                      @bidwriter/frontend-leads
+/package.json              @bidwriter/frontend-leads
+
+# 桌面
+/desktop/                  @bidwriter/desktop-leads @bidwriter/frontend-leads
+
+# 部署 / 运维
+/helm/                     @bidwriter/devops-team
+/docker-compose*.yml       @bidwriter/devops-team
+/.github/workflows/        @bidwriter/devops-team
+/Dockerfile                @bidwriter/devops-team
+
+# 安全相关
+/services/*/internal/auth/ @bidwriter/security-team @bidwriter/backend-leads
+/services/*/internal/crypto/ @bidwriter/security-team
+/services/api-gateway/internal/middleware/ @bidwriter/security-team
+
+# 决策记录（ADR）
+/docs/decisions/           @bidwriter/architects
+
+# AI / Prompt
+/shared/prompts/           @bidwriter/ai-team
+/services/router-svc/configs/ @bidwriter/ai-team

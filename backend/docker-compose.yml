@@ -1,0 +1,157 @@
+# BidWriter local development stack.
+# Usage:
+#   make db-up           # start postgres + redis + minio
+#   make dev             # start everything
+#   make db-down         # stop
+
+services:
+  # ============================================================================
+  # PostgreSQL 16 + pgvector
+  # ============================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: bidwriter-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bidwriter
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/initdb.d:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bidwriter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Redis 7 (cache, queue, pubsub)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: bidwriter-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # MinIO (S3-compatible object storage)
+  # ============================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: bidwriter-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO bucket auto-init
+  minio-init:
+    image: minio/mc:latest
+    container_name: bidwriter-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/bidwriter-documents;
+      mc mb --ignore-existing local/bidwriter-exports;
+      mc mb --ignore-existing local/bidwriter-avatars;
+      mc anonymous set download local/bidwriter-exports;
+      echo 'MinIO buckets ready';
+      "
+
+  # ============================================================================
+  # Ollama (local LLM — optional for fully-offline dev)
+  # ============================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: bidwriter-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # GPU passthrough (uncomment if you have NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ============================================================================
+  # Prometheus (metrics)
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: bidwriter-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./helm/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+
+  # ============================================================================
+  # Grafana (dashboards)
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: bidwriter-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./helm/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  default:
+    name: bidwriter-net
