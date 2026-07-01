@@ -59,8 +59,9 @@ export const bidsApi = {
   },
 }
 
-/** Parse `filename=...` (RFC 6266) from a Content-Disposition header value; supports quoted and unquoted forms. */
-function filenameFromDisposition(header: string | undefined): string | null {
+/** Parse `filename=...` (RFC 6266) from a Content-Disposition header value; supports quoted and unquoted forms.
+ *  Exported for unit testing. */
+export function filenameFromDisposition(header: string | undefined): string | null {
   if (!header) return null
   const m = header.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
   if (!m) return null
