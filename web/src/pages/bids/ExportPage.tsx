@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { bidsApi } from '../../api/bids'
+
+type ExportFormat = 'word' | 'pdf'
 
 export default function ExportPage() {
   const { id } = useParams<{ id: string }>()
@@ -12,13 +15,26 @@ export default function ExportPage() {
   })
 
   const bid = data?.data.data
+  const ready = bid?.status === 'done'
 
-  const handleExportWord = () => {
-    window.open(`/api/v1/bids/${id}/export/word`, '_blank')
-  }
+  const [exporting, setExporting] = useState<ExportFormat | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleExportPdf = () => {
-    window.open(`/api/v1/bids/${id}/export/pdf`, '_blank')
+  const handleExport = async (format: ExportFormat) => {
+    if (!id || exporting) return
+    setError(null)
+    setExporting(format)
+    try {
+      const { blob, filename } =
+        format === 'word' ? await bidsApi.exportWord(id) : await bidsApi.exportPdf(id)
+      triggerBrowserDownload(blob, filename)
+    } catch (e) {
+      // 401 is handled by the axios interceptor (logout + redirect)
+      const message = e instanceof Error ? e.message : '导出失败'
+      setError(message)
+    } finally {
+      setExporting(null)
+    }
   }
 
   if (isLoading) return <div className="p-6">加载中...</div>
@@ -36,51 +52,38 @@ export default function ExportPage() {
         <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <h2 className="text-lg font-medium mb-4">{bid?.project_name || '标书文档'}</h2>
           <p className="text-sm text-gray-500 mb-6">
-            状态: {bid?.status === 'done' ? '已完成' : '未完成'}
+            状态: {ready ? '已完成' : '未完成'}
           </p>
 
           <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <span className="text-2xl">📄</span>
-                </div>
-                <div>
-                  <h3 className="font-medium">Word 文档 (.docx)</h3>
-                  <p className="text-sm text-gray-500">适用于编辑和打印</p>
-                </div>
-              </div>
-              <button
-                onClick={handleExportWord}
-                disabled={bid?.status !== 'done'}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                下载
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-                  <span className="text-2xl">📕</span>
-                </div>
-                <div>
-                  <h3 className="font-medium">PDF 文档</h3>
-                  <p className="text-sm text-gray-500">适用于正式提交和存档</p>
-                </div>
-              </div>
-              <button
-                onClick={handleExportPdf}
-                disabled={bid?.status !== 'done'}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                下载
-              </button>
-            </div>
+            <ExportRow
+              icon="📄"
+              tone="blue"
+              title="Word 文档 (.docx)"
+              description="适用于编辑和打印"
+              disabled={!ready || exporting !== null}
+              loading={exporting === 'word'}
+              onClick={() => handleExport('word')}
+            />
+            <ExportRow
+              icon="📕"
+              tone="red"
+              title="PDF 文档"
+              description="适用于正式提交和存档（MVP 暂复用 Word 格式）"
+              disabled={!ready || exporting !== null}
+              loading={exporting === 'pdf'}
+              onClick={() => handleExport('pdf')}
+            />
           </div>
+
+          {error && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              {error}
+            </div>
+          )}
         </div>
 
-        {bid?.status !== 'done' && (
+        {!ready && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <p className="text-sm text-yellow-800">
               标书尚未生成完成，请等待所有章节生成并通过审计后再导出。
@@ -100,4 +103,62 @@ export default function ExportPage() {
       </div>
     </div>
   )
+}
+
+function ExportRow({
+  icon,
+  tone,
+  title,
+  description,
+  disabled,
+  loading,
+  onClick,
+}: {
+  icon: string
+  tone: 'blue' | 'red'
+  title: string
+  description: string
+  disabled: boolean
+  loading: boolean
+  onClick: () => void
+}) {
+  const toneClass =
+    tone === 'blue'
+      ? 'bg-blue-600 hover:bg-blue-700'
+      : 'bg-red-600 hover:bg-red-700'
+  const iconBg = tone === 'blue' ? 'bg-blue-100' : 'bg-red-100'
+
+  return (
+    <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+      <div className="flex items-center gap-4">
+        <div className={`w-12 h-12 ${iconBg} rounded-lg flex items-center justify-center`}>
+          <span className="text-2xl">{icon}</span>
+        </div>
+        <div>
+          <h3 className="font-medium">{title}</h3>
+          <p className="text-sm text-gray-500">{description}</p>
+        </div>
+      </div>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${toneClass}`}
+      >
+        {loading ? '导出中…' : '下载'}
+      </button>
+    </div>
+  )
+}
+
+/** Save a Blob to disk via a transient anchor with the given filename. */
+function triggerBrowserDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  // Revoke after the click is processed to free memory.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }

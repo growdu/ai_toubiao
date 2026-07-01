@@ -41,6 +41,34 @@ export const bidsApi = {
 
   resolveIssues: (id: string, data: { issue_id: string; action: string }[]) =>
     api.post<{ data: AuditReport }>(`/bids/${id}/resolve-issues`, { issues: data }),
+
+  /** Export the bid as a Word (.docx) file. Returns the raw blob and suggested filename. */
+  exportWord: async (id: string): Promise<{ blob: Blob; filename: string }> => {
+    const res = await api.get<Blob>(`/bids/${id}/export/word`, {
+      responseType: 'blob',
+    })
+    return { blob: res.data, filename: filenameFromDisposition(res.headers['content-disposition']) ?? `bid_${id}.docx` }
+  },
+
+  /** Export the bid as a PDF file. MVP falls back to .docx until LibreOffice is wired in. */
+  exportPdf: async (id: string): Promise<{ blob: Blob; filename: string }> => {
+    const res = await api.get<Blob>(`/bids/${id}/export/pdf`, {
+      responseType: 'blob',
+    })
+    return { blob: res.data, filename: filenameFromDisposition(res.headers['content-disposition']) ?? `bid_${id}.pdf` }
+  },
+}
+
+/** Parse `filename=...` (RFC 6266) from a Content-Disposition header value; supports quoted and unquoted forms. */
+function filenameFromDisposition(header: string | undefined): string | null {
+  if (!header) return null
+  const m = header.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
+  if (!m) return null
+  try {
+    return decodeURIComponent(m[1])
+  } catch {
+    return m[1]
+  }
 }
 
 export interface ChapterSpec {
