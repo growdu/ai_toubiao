@@ -35,12 +35,33 @@ in `YYYY-MM-DD`.
 - Test setup (`src/test/setup.ts`): adds RTL `cleanup()` so each
   `render()` mounts into a fresh DOM, and registers `jest-dom`
   matchers.
+- **Audit / Template / Billing / Notify handler tests** (cd3a64d): added
+  handler-level tests for the previously uncovered services and the
+  consumer-defined interfaces they need.
+- **End-to-end infrastructure** (e277515): `infra/docker-compose.yml`
+  to bring up the full local stack (Postgres, Redis, all 6 services,
+  Caddy); `docs/INFRA.md` for the daily workflow; and a
+  cross-service smoke test (`scripts/smoke-e2e.sh`, 11/11 green)
+  that hits real HTTP endpoints through the gateway and verifies
+  DB persistence end-to-end.
+- **Benchmark regression guard** (538be05): a CI workflow
+  (`.github/workflows/bench-guard.yml`) that runs every push/PR
+  the eight hot-path benchmarks, stores the numbers in the
+  `bench-results` branch, and fails the build when any benchmark
+  regresses by more than the configured `BUDGET_PCT` (default 15%).
+  Includes a stable `benchstat -split=package` style summary,
+  machine-readable JSON artifacts, and a `bench/budgets.json`
+  file that lets teams set per-benchmark thresholds. See
+  `docs/BENCH_GUARD.md` for the full design and how to update
+  baselines after an intentional perf change.
 
 ### Test counts
-- Backend: **232** Test functions across **33** `_test.go` files
-  (was 227 / 28).
+- Backend: **264** Test functions + **10** Benchmark functions
+  across **36** `_test.go` files (was 227 / 28).
 - Web: **23** vitest cases across **4** `*.test.{ts,tsx}` files
   (was 13 / 2).
+- E2E: 11/11 cross-service smoke checks green
+  (`scripts/smoke-e2e.sh`).
 
 ### How to run benchmarks
 ```bash
