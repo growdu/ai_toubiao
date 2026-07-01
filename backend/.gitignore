@@ -26,3 +26,5 @@ coverage.out
 # Temporary files
 *.tmp
 *.log.run/
+bench/current.txt
+bench/report.md

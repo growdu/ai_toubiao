@@ -105,6 +105,47 @@ coverage: ## Generate coverage report
 	done
 
 # ============================================================================
+# Benchmarks
+# ============================================================================
+# Run all Go benchmarks and write to bench/current.txt. Combine with
+# `make bench-guard` to detect regressions vs bench/baseline/baseline.txt.
+BENCH_PKGS := ./services/api-gateway/... \
+              ./services/workflow-svc/internal/api/... \
+              ./shared/...
+BENCH_FLAGS := -run=^$$ -bench=. -benchmem -count=3 -benchtime=1s
+
+.PHONY: bench
+bench: ## Run all Go benchmarks and write to bench/current.txt
+	@mkdir -p bench
+	$(GO) test $(BENCH_FLAGS) $(BENCH_PKGS) | tee bench/current.txt
+
+.PHONY: bench-baseline
+bench-baseline: ## Refresh the stored baseline from a fresh bench run
+	@mkdir -p bench/baseline
+	$(GO) test $(BENCH_FLAGS) $(BENCH_PKGS) | tee bench/baseline/baseline.txt
+	@echo "==> baseline updated: bench/baseline/baseline.txt"
+
+.PHONY: bench-guard
+bench-guard: bench ## Run benchmarks and fail if any regress >20% vs baseline
+	@echo "==> comparing current vs baseline (threshold 20%)"
+	@cd scripts/bench-guard && \
+	  $(GO) run main.go \
+	    --baseline ../../bench/baseline/baseline.txt \
+	    --current  ../../bench/current.txt \
+	    --threshold 20 \
+	    --output   ../../bench/report.md
+	@echo "==> report: bench/report.md"
+
+.PHONY: bench-guard-threshold
+bench-guard-threshold: bench ## Same as bench-guard, configurable threshold (THRESHOLD=15)
+	@cd scripts/bench-guard && \
+	  $(GO) run main.go \
+	    --baseline ../../bench/baseline/baseline.txt \
+	    --current  ../../bench/current.txt \
+	    --threshold $(or $(THRESHOLD),20) \
+	    --output   ../../bench/report.md
+
+# ============================================================================
 # Lint
 # ============================================================================
 .PHONY: lint

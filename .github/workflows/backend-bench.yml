@@ -1,0 +1,88 @@
+name: backend-bench
+
+# Detects performance regressions in Go benchmarks.
+# Triggers: push to main + PRs that touch backend Go code.
+# Failure: any benchmark regresses >20% vs bench/baseline/baseline.txt.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**/*.go'
+      - 'backend/go.work'
+      - 'backend/go.work.sum'
+      - 'backend/Makefile'
+      - 'backend/scripts/bench-guard/**'
+      - 'backend/bench/baseline/baseline.txt'
+      - '.github/workflows/backend-bench.yml'
+  pull_request:
+    paths:
+      - 'backend/**/*.go'
+      - 'backend/Makefile'
+      - 'backend/scripts/bench-guard/**'
+      - 'backend/bench/baseline/baseline.txt'
+      - '.github/workflows/backend-bench.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-guard:
+    name: Benchmark regression guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: backend/go.work.sum
+
+      - name: Run benchmarks
+        id: bench
+        run: make bench
+
+      - name: Guard against regressions
+        id: guard
+        # Allow workflow to pass when there's no baseline (first run).
+        # Once a baseline is committed, this guard will gate every change.
+        run: |
+          if [ ! -s bench/baseline/baseline.txt ]; then
+            echo "::warning::no baseline present — skipping guard (run 'make bench-baseline' to seed it)"
+            exit 0
+          fi
+          make bench-guard
+
+      - name: Upload bench artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: |
+            backend/bench/current.txt
+            backend/bench/report.md
+          retention-days: 30
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report = '';
+            try {
+              report = fs.readFileSync('backend/bench/report.md', 'utf8');
+            } catch (e) { report = '(no report available)'; }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '## ⚠️ Benchmark regression detected\n\n' + report,
+            });
