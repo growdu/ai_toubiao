@@ -1,0 +1,56 @@
+# BidWriter infrastructure-only compose for local cross-service smoke tests.
+#
+# Use this when you want to run the Go services locally via `go run`
+# (faster iteration than rebuilding 10 service images) but still want
+# managed Postgres + MinIO.
+#
+#   docker compose -f docker/docker-compose.infra.yml up -d
+#
+# Then start each service:
+#   ./scripts/run_local.sh api-gateway
+#   ./scripts/run_local.sh project-svc
+#   ...
+#
+# Or run a smoke test that hits the live stack:
+#   ./scripts/smoke_e2e.sh
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: bidwriter-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bidwriter
+    ports:
+      - "5434:5432"
+    volumes:
+      # manual migrations via scripts/apply-migrations.sh
+      - bidwriter_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: bidwriter-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - bidwriter_minio:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bidwriter_pg:
+  bidwriter_minio:

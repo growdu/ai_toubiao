@@ -4,6 +4,9 @@
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- pgvector: needed by 00006 (bid_jobs.embedding) and 00007 (kb_materials.content_vec).
+-- Available out-of-the-box in the pgvector/pgvector image used by infra compose.
+CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- ============================================================================
 -- Tenants (organizations using BidWriter)

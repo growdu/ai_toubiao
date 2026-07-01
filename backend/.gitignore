@@ -25,4 +25,4 @@ coverage.out
 
 # Temporary files
 *.tmp
-*.log
+*.log.run/
