@@ -240,3 +240,21 @@ npm run lint:mermaid
 ## License
 
 Private · 仅供内部使用
+
+## 测试与基准
+
+| 类别 | 数量 | 说明 |
+|---|---|---|
+| 后端 Test 函数 | 232 | 33 个 `_test.go`,覆盖 25 个包,0 失败 |
+| 前端 vitest | 23 | 4 个 `*.test.{ts,tsx}`(LoginPage, Layout, auth store, bids api) |
+
+性能基准 (Go `testing.B`):
+
+| 包 | 基准 | 当前基线 (i5-8400) |
+|---|---|---|
+| `shared/pkg/httperr` | `BenchmarkWrite` / `BenchmarkWriteNoDetails` | 863 ns · 456 ns |
+| `shared/pkg/validator` | `Validate` / `hex64` / `mime` | 1.1 µs · 747 ns · 486 ns |
+| `api-gateway/.../ratelimit` | `AllowSingleKey` / `ManyKeys` / `Concurrent` | 75 ns · 89 ns · 170 ns |
+| `workflow-svc/.../ooxml` | `DefaultOutline` / `LargeBid` | 219 µs · 233 µs |
+
+运行方式见 `CHANGELOG.md` 末尾。
