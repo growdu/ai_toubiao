@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 7 ADR (Architecture Decision Records)
 - BidWriter 框架设计文档
 
+### Changed
+- **API Gateway**: rewrote proxy route prefix from `/api/v1/workflows` to `/api/v1/bids` so the public surface matches the frontend `bidsApi`. Refreshed the package-level routing-table comment to reflect the actual proxy prefixes (`projects`, `documents`, `bids`) and explicitly note `knowledge` as not yet proxied. (api-gateway/cmd/api-gateway/main.go)
+- **workflow-svc**: mounted export endpoints on the new `/api/v1/bids/{id}/...` mount, exposing `GET /export/word`, `GET /export/pdf`, and `POST /export` (with chapter payload). The first two accept an empty body and fill in default chapter stubs; PDF currently falls back to Word output pending a LibreOffice pipeline. (workflow-svc/internal/api/{handlers.go,export.go})
+- **web ExportPage**: replaced `window.open(...)` (which silently dropped the JWT) with an axios `responseType: 'blob'` download driven by the existing auth interceptor. Added per-format loading state and inline error banner, plus a `download` filename parsed from `Content-Disposition` when present. (web/src/pages/bids/ExportPage.tsx, web/src/api/bids.ts)
+
 ## [0.1.0] - TBD
 
 ### Added
