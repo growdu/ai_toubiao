@@ -63,6 +63,15 @@ in `YYYY-MM-DD`.
 - E2E: 11/11 cross-service smoke checks green
   (`scripts/smoke-e2e.sh`).
 
+### Notes
+- The pre-existing `CI` workflow (docs lint + link check + mkdocs
+  strict) is **not** exercised by this push and is **not** green on
+  `main`. It has been failing on 14 of the last 16 pushes predating
+  this session (markdownlint glob negation is ignored, and
+  `tools/mermaid-lint.mjs` cannot find Chrome in CI). See
+  [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) for the breakdown
+  and fix sketches. Backend / Web / E2E / Bench all pass independently.
+
 ### How to run benchmarks
 ```bash
 # Hot-path baselines (one-liner per package)
