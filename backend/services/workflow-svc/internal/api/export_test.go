@@ -227,6 +227,81 @@ func TestLibreOfficeConverter_ResolveFromPath(t *testing.T) {
 	_ = c.Available()
 }
 
+// TestLibreOfficeConverter_RealConversion is an end-to-end check: it builds
+// a real DOCX in memory, pipes it through the LibreOffice shell-out path,
+// and verifies the output is an actual PDF (magic bytes, EOF marker, sane
+// size). Skipped automatically when soffice is not installed, so this stays
+// green in minimal containers while still asserting the full PDF pipeline
+// wherever the binary is present.
+func TestLibreOfficeConverter_RealConversion(t *testing.T) {
+	c := NewLibreOfficeConverter("")
+	if !c.Available() {
+		t.Skip("libreoffice/soffice not installed; skipping real conversion e2e")
+	}
+
+	// Build a real DOCX with multiple chapters so LibreOffice has actual
+	// content to paginate.
+	var docxBuf bytes.Buffer
+	if err := (ooxmlBuilder{}).Build(&docxBuf, "E2E 测试标书", []ChapterData{
+		{Title: "第一章 项目概述", Level: 1, SortOrder: 1, Content: "本章介绍项目背景与目标。\n第二段说明范围。"},
+		{Title: "1.1 背景", Level: 2, SortOrder: 2, Content: "项目由甲方发起,旨在……"},
+		{Title: "第二章 技术方案", Level: 1, SortOrder: 3, Content: "技术方案分为三个层次。"},
+	}); err != nil {
+		t.Fatalf("build docx: %v", err)
+	}
+	if docxBuf.Len() < 200 {
+		t.Fatalf("docx suspiciously small: %d bytes", docxBuf.Len())
+	}
+
+	// Convert with a generous timeout — first-run LibreOffice init can be slow.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*1_000_000_000) // 90s
+	defer cancel()
+
+	var pdfBuf bytes.Buffer
+	if err := c.ConvertToPDF(ctx, bytes.NewReader(docxBuf.Bytes()), &pdfBuf); err != nil {
+		t.Fatalf("ConvertToPDF: %v", err)
+	}
+
+	out := pdfBuf.Bytes()
+	if len(out) < 500 {
+		t.Fatalf("pdf suspiciously small: %d bytes", len(out))
+	}
+
+	// PDF files start with "%PDF-" and end with "%%EOF".
+	if !bytes.HasPrefix(out, []byte("%PDF-")) {
+		t.Fatalf("missing %%PDF- magic; first 16 bytes: %q", out[:min(16, len(out))])
+	}
+	// %%EOF may be followed by whitespace/newline; check suffix ignoring trailing whitespace.
+	trimmed := bytes.TrimRight(out, " \t\r\n")
+	if !bytes.HasSuffix(trimmed, []byte("%%EOF")) {
+		t.Fatalf("missing %%EOF trailer; last 32 bytes: %q", out[max(0, len(out)-32):])
+	}
+
+	// Sanity: PDF version field after magic — should be 1.x through 2.x.
+	if len(out) >= 8 {
+		ver := string(out[5:8]) // e.g. "1.4", "1.7", "2.0"
+		if !strings.HasPrefix(ver, "1.") && !strings.HasPrefix(ver, "2.") {
+			t.Errorf("unexpected PDF version field %q", ver)
+		}
+	}
+
+	t.Logf("converted %d bytes docx -> %d bytes pdf", docxBuf.Len(), pdfBuf.Len())
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // fakeConverter lets handler tests pin Available() and intercept the
 // PDF conversion step.
 type fakeConverter struct {
