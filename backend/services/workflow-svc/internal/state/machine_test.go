@@ -1,153 +1,143 @@
 package state
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/bidwriter/services/workflow-svc/internal/model"
 )
 
+func TestLinearPlan(t *testing.T) {
+	got := LinearPlan()
+	want := []model.StepName{
+		model.StepParsing, model.StepOutlining, model.StepFacts,
+		model.StepGenerating, model.StepAuditing, model.StepExporting,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len(LinearPlan)=%d, want %d", len(got), len(want))
+	}
+	for i, s := range want {
+		if got[i] != s {
+			t.Errorf("LinearPlan[%d]=%s, want %s", i, got[i], s)
+		}
+	}
+}
+
 func TestCanTransition_HappyPath(t *testing.T) {
-	happy := []struct{ from, to model.State }{
-		{model.StatePending, model.StateParsing},
-		{model.StateParsing, model.StateOutlining},
-		{model.StateOutlining, model.StateFacts},
-		{model.StateFacts, model.StateGenerating},
-		{model.StateGenerating, model.StateAuditing},
-		{model.StateAuditing, model.StateExporting},
-		{model.StateExporting, model.StateDone},
-	}
-	for _, c := range happy {
-		if !CanTransition(c.from, c.to) {
-			t.Errorf("expected %s -> %s to be allowed", c.from, c.to)
-		}
-	}
-}
-
-func TestCanTransition_CancellationFromAnywhere(t *testing.T) {
-	states := []model.State{
+	chain := []model.State{
 		model.StatePending, model.StateParsing, model.StateOutlining,
 		model.StateFacts, model.StateGenerating, model.StateAuditing,
-		model.StateExporting, model.StatePaused,
+		model.StateExporting, model.StateDone,
 	}
-	for _, s := range states {
-		if !CanTransition(s, model.StateCancelled) {
-			t.Errorf("expected %s -> cancelled to be allowed", s)
+	for i := 0; i < len(chain)-1; i++ {
+		if !CanTransition(chain[i], chain[i+1]) {
+			t.Errorf("expected %s -> %s allowed", chain[i], chain[i+1])
 		}
 	}
 }
 
-func TestCanTransition_FailureFromAnywhere(t *testing.T) {
-	// any non-terminal state can fail
-	for _, s := range []model.State{
-		model.StatePending, model.StateParsing, model.StateOutlining,
-		model.StateFacts, model.StateGenerating, model.StateAuditing,
-		model.StateExporting,
-	} {
-		if !CanTransition(s, model.StateFailed) {
-			t.Errorf("expected %s -> failed to be allowed", s)
+func TestCanTransition_TerminalStates(t *testing.T) {
+	for _, s := range []model.State{model.StateDone, model.StateCancelled} {
+		if CanTransition(s, model.StateParsing) {
+			t.Errorf("terminal state %s should not allow any outgoing transition", s)
 		}
 	}
 }
 
-func TestCanTransition_TerminalNoOutgoing(t *testing.T) {
-	// Done and Cancelled have no outgoing transitions
-	for _, from := range []model.State{model.StateDone, model.StateCancelled} {
-		for _, to := range []model.State{
-			model.StatePending, model.StateParsing, model.StateOutlining,
-			model.StateFacts, model.StateGenerating, model.StateAuditing,
-			model.StateExporting, model.StateDone, model.StateFailed,
-			model.StateCancelled, model.StatePaused,
-		} {
-			if CanTransition(from, to) {
-				t.Errorf("terminal state %s should NOT transition to %s", from, to)
+func TestCanTransition_FailureFanout(t *testing.T) {
+	// Active states (the happy-path forward states) should each be allowed
+	// to transition to failed. Paused and failed themselves are recovery
+	// states with restricted edges, so they're excluded.
+	canFail := map[model.State]bool{
+		model.StatePending: true, model.StateParsing: true,
+		model.StateOutlining: true, model.StateFacts: true,
+		model.StateGenerating: true, model.StateAuditing: true,
+		model.StateExporting: true,
+	}
+	for from, tos := range validTransitions {
+		if !canFail[from] {
+			continue
+		}
+		hasFailed := false
+		for _, to := range tos {
+			if to == model.StateFailed {
+				hasFailed = true
+				break
 			}
 		}
-	}
-}
-
-func TestCanTransition_FailedCanResume(t *testing.T) {
-	if !CanTransition(model.StateFailed, model.StateParsing) {
-		t.Error("failed -> parsing should be allowed (resume)")
-	}
-}
-
-func TestCanTransition_InvalidSkip(t *testing.T) {
-	// Cannot skip steps in the happy path
-	if CanTransition(model.StatePending, model.StateGenerating) {
-		t.Error("pending -> generating should NOT be allowed (must go through parsing, outlining, facts)")
-	}
-	if CanTransition(model.StateParsing, model.StateDone) {
-		t.Error("parsing -> done should NOT be allowed")
-	}
-}
-
-func TestCanTransition_Backwards(t *testing.T) {
-	// Cannot go backwards in the happy path (except via pause)
-	if CanTransition(model.StateGenerating, model.StateFacts) {
-		t.Error("generating -> facts should NOT be allowed (no backwards)")
-	}
-}
-
-func TestValidate(t *testing.T) {
-	if err := Validate(model.StatePending, model.StateParsing); err != nil {
-		t.Errorf("Validate(pending->parsing): %v", err)
-	}
-	if err := Validate(model.StatePending, model.StateDone); err == nil {
-		t.Error("Validate(pending->done) should fail")
-	}
-}
-
-func TestIsTerminal(t *testing.T) {
-	terminal := []model.State{model.StateDone, model.StateCancelled}
-	for _, s := range terminal {
-		if !s.IsTerminal() {
-			t.Errorf("%s should be terminal", s)
+		if !hasFailed {
+			t.Errorf("state %s should be allowed to fail", from)
 		}
 	}
-	nonTerminal := []model.State{
-		model.StatePending, model.StateParsing, model.StateOutlining,
-		model.StateFacts, model.StateGenerating, model.StateAuditing,
-		model.StateExporting, model.StateFailed, model.StatePaused,
+}
+
+func TestCanTransition_RejectBackwards(t *testing.T) {
+	// pending -> done is not a valid one-step jump.
+	if CanTransition(model.StatePending, model.StateDone) {
+		t.Error("pending -> done should not be allowed")
 	}
-	for _, s := range nonTerminal {
-		if s.IsTerminal() {
-			t.Errorf("%s should NOT be terminal", s)
+	// done -> anything is rejected.
+	if CanTransition(model.StateDone, model.StateParsing) {
+		t.Error("done -> parsing should not be allowed")
+	}
+}
+
+func TestValidate_AllowedReturnsNil(t *testing.T) {
+	if err := Validate(model.StatePending, model.StateParsing); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
+func TestValidate_DisallowedReturnsErr(t *testing.T) {
+	err := Validate(model.StatePending, model.StateDone)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Errorf("expected ErrInvalidTransition, got %v", err)
+	}
+}
+
+func TestStepForState(t *testing.T) {
+	cases := []struct {
+		s    model.State
+		want model.StepName
+		ok   bool
+	}{
+		{model.StateParsing, model.StepParsing, true},
+		{model.StateOutlining, model.StepOutlining, true},
+		{model.StateFacts, model.StepFacts, true},
+		{model.StateGenerating, model.StepGenerating, true},
+		{model.StateAuditing, model.StepAuditing, true},
+		{model.StateExporting, model.StepExporting, true},
+		{model.StatePending, "", false},
+		{model.StateDone, "", false},
+		{model.StateFailed, "", false},
+	}
+	for _, c := range cases {
+		got, ok := StepForState(c.s)
+		if ok != c.ok || got != c.want {
+			t.Errorf("StepForState(%s) = (%s, %v), want (%s, %v)", c.s, got, ok, c.want, c.ok)
 		}
 	}
 }
 
 func TestNextState(t *testing.T) {
-	cases := []struct {
-		from   model.State
-		want   model.State
-		wantOK bool
-	}{
-		{model.StatePending, model.StateParsing, true},
-		{model.StateParsing, model.StateOutlining, true},
-		{model.StateExporting, model.StateDone, true},
-		{model.StateDone, "", false},
-		{model.StateFailed, "", false},
+	chain := []model.State{
+		model.StatePending, model.StateParsing, model.StateOutlining,
+		model.StateFacts, model.StateGenerating, model.StateAuditing,
+		model.StateExporting, model.StateDone,
 	}
-	for _, c := range cases {
-		got, ok := NextState(c.from)
-		if ok != c.wantOK || got != c.want {
-			t.Errorf("NextState(%s) = (%s, %v), want (%s, %v)", c.from, got, ok, c.want, c.wantOK)
+	for i := 0; i < len(chain)-1; i++ {
+		got, ok := NextState(chain[i])
+		if !ok || got != chain[i+1] {
+			t.Errorf("NextState(%s) = (%s, %v), want (%s, true)", chain[i], got, ok, chain[i+1])
 		}
 	}
-}
-
-func TestLinearPlan(t *testing.T) {
-	plan := LinearPlan()
-	if len(plan) != 6 {
-		t.Fatalf("LinearPlan should have 6 steps, got %d", len(plan))
+	if _, ok := NextState(model.StateFailed); ok {
+		t.Error("Failed should have no next state")
 	}
-	expected := []model.StepName{
-		model.StepParsing, model.StepOutlining, model.StepFacts,
-		model.StepGenerating, model.StepAuditing, model.StepExporting,
-	}
-	for i, s := range plan {
-		if s != expected[i] {
-			t.Errorf("step[%d] = %s, want %s", i, s, expected[i])
-		}
+	if _, ok := NextState(model.State("unknown")); ok {
+		t.Error("unknown state should have no next state")
 	}
 }

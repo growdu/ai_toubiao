@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,9 +19,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// WorkflowBackend is the storage contract required by Handlers. Defined at the
+// consumer (api package) so handlers can be unit-tested with a fake. The
+// concrete *store.Store satisfies this interface naturally.
+type WorkflowBackend interface {
+	Create(ctx context.Context, req *model.CreateRequest, actorID uuid.UUID) (*model.Workflow, error)
+	Get(ctx context.Context, id uuid.UUID) (*model.Workflow, error)
+	List(ctx context.Context, projectID *uuid.UUID, status *model.State, limit int) ([]*model.Workflow, error)
+	Transition(ctx context.Context, id uuid.UUID, req *model.TransitionRequest, expectedVersion int, actorID uuid.UUID) (*model.Workflow, error)
+	ListSteps(ctx context.Context, workflowID uuid.UUID) ([]*model.Step, error)
+	ListEvents(ctx context.Context, workflowID uuid.UUID, limit int) ([]*model.Event, error)
+}
+
 type Handlers struct {
-	Store *store.Store
-	Log   *slog.Logger
+	Store        WorkflowBackend
+	Log          *slog.Logger
+	DocBuilder   DocBuilder   // optional; defaults to ooxmlBuilder{}
+	PDFConverter PDFConverter // optional; nil means PDF endpoints fall back to DOCX
 }
 
 func (h *Handlers) Routes() http.Handler {

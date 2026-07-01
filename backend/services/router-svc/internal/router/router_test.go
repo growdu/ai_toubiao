@@ -43,6 +43,9 @@ func (p *flakyProvider) Chat(ctx context.Context, in provider.ChatInput) (*provi
 
 func (p *flakyProvider) EstimateCost(in provider.ChatInput) float64 { return 0.0001 }
 func (p *flakyProvider) HealthCheck(ctx context.Context) error      { return nil }
+func (p *flakyProvider) Embed(ctx context.Context, in provider.EmbeddingInput) (*provider.EmbeddingOutput, error) {
+	return &provider.EmbeddingOutput{Embeddings: [][]float32{{0}}, Model: "flaky"}, nil
+}
 
 var errSimulated = &simulatedError{}
 

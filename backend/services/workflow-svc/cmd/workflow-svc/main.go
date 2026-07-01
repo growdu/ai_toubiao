@@ -60,7 +60,20 @@ func run() error {
 	}
 	defer pool.Close()
 
-	h := &api.Handlers{Store: store.New(pool), Log: log}
+	// Try to wire LibreOffice for PDF export. If soffice isn't on PATH
+	// the converter reports Available()==false and the PDF endpoints
+	// gracefully fall back to returning a DOCX with a warning header.
+	pdf := api.NewLibreOfficeConverter(cfg.LibreOfficeBin)
+	if !pdf.Available() {
+		log.Warn("libreoffice not found; /export/pdf will fall back to docx")
+	}
+
+	h := &api.Handlers{
+		Store:        store.New(pool),
+		Log:          log,
+		DocBuilder:   nil, // use default ooxmlBuilder
+		PDFConverter: pdf,
+	}
 	router := h.Routes()
 	handler := middleware.RequestID(middleware.Recover(log)(middleware.Logger(log)(router)))
 
