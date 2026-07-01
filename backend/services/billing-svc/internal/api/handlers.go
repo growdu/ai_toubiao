@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"github.com/bidwriter/services/billing-svc/internal/model"
-	"github.com/bidwriter/services/billing-svc/internal/service"
 	"github.com/bidwriter/services/billing-svc/internal/store"
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
@@ -18,9 +18,19 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// billingService is the service contract required by Handlers. Defined at the
+// consumer (api package) so handlers can be unit-tested with a fake. The
+// concrete *service.BillingService satisfies this interface naturally.
+type billingService interface {
+	GetCurrentBudget(ctx context.Context) (*model.BudgetSummary, error)
+	SetBudget(ctx context.Context, month string, limitCents int64) (*model.Budget, error)
+	AddTransaction(ctx context.Context, req *model.AddTransactionRequest) (*model.Transaction, error)
+	GetTransactions(ctx context.Context, limit int) ([]*model.Transaction, error)
+}
+
 type Handlers struct {
 	Store   *store.Store
-	Service *service.BillingService
+	Service billingService
 	Log     *slog.Logger
 }
 

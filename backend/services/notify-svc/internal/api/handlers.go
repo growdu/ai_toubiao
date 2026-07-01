@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/bidwriter/services/notify-svc/internal/model"
-	"github.com/bidwriter/services/notify-svc/internal/service"
 	"github.com/bidwriter/services/notify-svc/internal/store"
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
@@ -17,9 +17,19 @@ import (
 	"github.com/google/uuid"
 )
 
+// notifyService is the service contract required by Handlers. Defined at the
+// consumer (api package) so handlers can be unit-tested with a fake. The
+// concrete *service.NotifyService satisfies this interface naturally.
+type notifyService interface {
+	Send(ctx context.Context, req *model.SendRequest) error
+	CreatePreference(ctx context.Context, userID uuid.UUID, req *model.CreatePreferenceRequest) (*model.NotificationPreference, error)
+	ListPreferences(ctx context.Context) ([]*model.NotificationPreference, error)
+	UpdatePreference(ctx context.Context, id uuid.UUID, req *model.UpdatePreferenceRequest) error
+	DeletePreference(ctx context.Context, id uuid.UUID) error
+}
+
 type Handlers struct {
-	Store   *store.Store
-	Service *service.NotifyService
+	Service notifyService
 	Log     *slog.Logger
 }
 

@@ -28,6 +28,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RejectionChecker (forbidden patterns, starred-clause suppression, nil
   content), CrossAuditor (duplicate detection, length guard) and
   similarStrings.
+- **billing-svc unit tests**: service (GetCurrentBudget percent calc with
+  limit=0 / limit>0 / spent=0 / 50% / store error propagation,
+  SetBudget flows-through, GetTransactions limit normalization for 0 /
+  negative / explicit) and api (envelope {data:...}, 401 on missing
+  tenant, 400 on bad JSON, 500 on service error, 201 on add, query
+  passthrough for ?limit=N).
+- **notify-svc unit tests**: service (Send happy path with
+  channel-dispatch seam, Send unknown channel + email/dingtalk/wecom
+  "not implemented" all update log to failed, CreateLog error short-
+  circuits, UpdateLog error logged not propagated, all 3 NotifyX
+  "no enabled prefs" branches, preference CRUD pass-through) and api
+  (send/preferences CRUD, multipart not required, 401/400/500 paths,
+  healthz).
+- **template-svc unit tests**: service (Upload happy path with
+  IsDefault=true/false, ClearDefault failure rolls back storage,
+  store.Create failure rolls back storage, storage.Put failure
+  short-circuits; Download happy path + 3-tuple-on-error;
+  Delete cleanup + storage.Delete-failure-swallowed; Update
+  promotes-to-default clears defaults first) and api (list/get/
+  update/delete 401+404+400+204+200 paths, multipart upload
+  propagates name/kind/filename/size, no-file 400, download
+  Content-Type + Content-Disposition headers, healthz).
+- **project-svc unit tests**: auth.Verifier (round-trip, wrong secret,
+  expired, malformed, bad tenant UUID, bad sub UUID, none-alg
+  rejection, issuer/iat/exp claims) and api (full CRUD with real
+  JWT middleware + auth.IssueToken; list returns {data,meta}, 400 on
+  bad cursor, 401 without token, create 201 + owner_id from
+  auth context + default currency CNY, validation 400, update 200
+  / 409 version conflict / 404, delete 204 / 404, healthz 200).
 
 ### Changed
 - **workflow-svc export**: extracted `DocBuilder` and `PDFConverter`
@@ -41,6 +70,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WorkflowBackend` interface (in `api/`) so handlers can be unit-tested
   with a fake without spinning up Postgres. `*store.Store` already
   satisfies it; `cmd/workflow-svc/main.go` wiring is unchanged.
+- **billing-svc service + api**: declared `Store` interface in
+  `service/` and `billingService` interface in `api/`; both let the
+  layers be unit-tested with hand-rolled fakes. `*store.Store` and
+  `*service.BillingService` still satisfy them; cmd wiring unchanged.
+- **notify-svc service + api**: same pattern — `Store` interface in
+  `service/`, `notifyService` interface in `api/`. Added a
+  package-level `channelSenders` seam so tests can override the
+  email/dingtalk/wecom dispatch without touching the real (unimplemented)
+  senders. Fixed a latent nil-deref: `sendErr.Error()` was called even
+  when the send succeeded; now guarded by an `errMsg == ""` check.
+  Removed the unused `Handlers.Store` field; cmd/main.go updated.
+- **template-svc service + api**: same pattern — `Store` interface in
+  `service/`, `Service` interface in `api/`. Removed the unused
+  `Handlers.Store` field; cmd/main.go updated.
+- **project-svc api**: declared `ProjectStore` interface in `api/` so
+  handlers can be unit-tested with a fake store. Auth (JWT) is exercised
+  in tests via the real `auth.Verifier` + `auth.IssueToken` (HS256)
+  against a fixed test secret — no live auth-svc needed.
 - **API Gateway**: rewrote proxy route prefix from `/api/v1/workflows` to `/api/v1/bids` so the public surface matches the frontend `bidsApi`. Refreshed the package-level routing-table comment to reflect the actual proxy prefixes (`projects`, `documents`, `bids`) and explicitly note `knowledge` as not yet proxied. (api-gateway/cmd/api-gateway/main.go)
 - **workflow-svc**: mounted export endpoints on the new `/api/v1/bids/{id}/...` mount, exposing `GET /export/word`, `GET /export/pdf`, and `POST /export` (with chapter payload). The first two accept an empty body and fill in default chapter stubs; PDF currently falls back to Word output pending a LibreOffice pipeline. (workflow-svc/internal/api/{handlers.go,export.go})
 - **web ExportPage**: replaced `window.open(...)` (which silently dropped the JWT) with an axios `responseType: 'blob'` download driven by the existing auth interceptor. Added per-format loading state and inline error banner, plus a `download` filename parsed from `Content-Disposition` when present. (web/src/pages/bids/ExportPage.tsx, web/src/api/bids.ts)

@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,8 +23,20 @@ import (
 
 // Handlers holds dependencies for the HTTP handlers.
 type Handlers struct {
-	Store *store.Store
+	// Store is the consumer-defined storage contract. *store.Store satisfies
+	// it; tests use a fake to avoid spinning up Postgres.
+	Store ProjectStore
 	Log   *slog.Logger
+}
+
+// ProjectStore is the storage contract required by Handlers. Declared at the
+// consumer (api package) so handlers can be unit-tested with a fake.
+type ProjectStore interface {
+	Create(ctx context.Context, p *model.Project) error
+	Get(ctx context.Context, id uuid.UUID) (*model.Project, error)
+	List(ctx context.Context, limit int, cursor *uuid.UUID) ([]*model.Project, error)
+	Update(ctx context.Context, id uuid.UUID, req *model.UpdateRequest) (*model.Project, error)
+	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 // Routes wires up the router. Auth middleware is applied at the router level.

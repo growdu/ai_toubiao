@@ -62,7 +62,7 @@ func run() error {
 
 	s := store.New(pool)
 	svc := service.NewTemplateService(s, stg)
-	h := &api.Handlers{Store: s, Service: svc, Log: log}
+	h := &api.Handlers{Service: svc, Log: log}
 	router := h.Routes()
 	handler := middleware.RequestID(middleware.Recover(log)(middleware.Logger(log)(router)))
 

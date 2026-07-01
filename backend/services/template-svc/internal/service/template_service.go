@@ -6,17 +6,28 @@ import (
 
 	"github.com/bidwriter/services/template-svc/internal/model"
 	"github.com/bidwriter/services/template-svc/internal/storage"
-	"github.com/bidwriter/services/template-svc/internal/store"
 	"github.com/google/uuid"
 )
 
 // TemplateService handles template business logic.
 type TemplateService struct {
-	store   *store.Store
+	store   Store
 	storage storage.Storage
 }
 
-func NewTemplateService(s *store.Store, stg storage.Storage) *TemplateService {
+// Store is the storage contract required by TemplateService. Declared at the
+// consumer (service package) so the service can be unit-tested with a fake.
+// The concrete *store.Store satisfies this interface.
+type Store interface {
+	Create(ctx context.Context, t *model.WordTemplate) error
+	Get(ctx context.Context, id uuid.UUID) (*model.WordTemplate, error)
+	List(ctx context.Context) ([]*model.WordTemplate, error)
+	Update(ctx context.Context, id uuid.UUID, req *model.UpdateRequest) (*model.WordTemplate, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	ClearDefault(ctx context.Context, kind string) error
+}
+
+func NewTemplateService(s Store, stg storage.Storage) *TemplateService {
 	return &TemplateService{store: s, storage: stg}
 }
 

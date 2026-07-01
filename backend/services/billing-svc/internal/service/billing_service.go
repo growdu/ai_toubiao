@@ -4,15 +4,25 @@ import (
 	"context"
 
 	"github.com/bidwriter/services/billing-svc/internal/model"
-	"github.com/bidwriter/services/billing-svc/internal/store"
 )
+
+// Store is the storage contract required by BillingService. Defined at the
+// consumer (service package) so the service can be unit-tested with a fake
+// without a live PG. The concrete *store.Store satisfies this interface
+// naturally.
+type Store interface {
+	GetOrCreateBudget(ctx context.Context, month string) (*model.Budget, error)
+	UpdateBudget(ctx context.Context, b *model.Budget) error
+	AddTransaction(ctx context.Context, req *model.AddTransactionRequest) (*model.Transaction, error)
+	GetTransactions(ctx context.Context, limit int) ([]*model.Transaction, error)
+}
 
 // BillingService handles billing operations.
 type BillingService struct {
-	store *store.Store
+	store Store
 }
 
-func NewBillingService(s *store.Store) *BillingService {
+func NewBillingService(s Store) *BillingService {
 	return &BillingService{store: s}
 }
 

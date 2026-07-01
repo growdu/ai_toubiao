@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/bidwriter/services/template-svc/internal/model"
-	"github.com/bidwriter/services/template-svc/internal/service"
 	"github.com/bidwriter/services/template-svc/internal/store"
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
@@ -21,9 +21,21 @@ import (
 const maxUploadBytes = 50 << 20 // 50 MB
 
 type Handlers struct {
-	Store   *store.Store
-	Service *service.TemplateService
+	// Service is the consumer-defined service interface. *service.TemplateService
+	// satisfies it; tests use a fake to avoid spinning up PG + filesystem.
+	Service Service
 	Log     *slog.Logger
+}
+
+// Service is the contract Handlers needs. Declared at the consumer (api
+// package) so the api layer can be unit-tested with a fake.
+type Service interface {
+	List(ctx context.Context) ([]*model.WordTemplate, error)
+	Upload(ctx context.Context, userID uuid.UUID, req *model.CreateRequest, file io.Reader, filename string, size int64) (*model.WordTemplate, error)
+	Get(ctx context.Context, id uuid.UUID) (*model.WordTemplate, error)
+	Update(ctx context.Context, id uuid.UUID, req *model.UpdateRequest) (*model.WordTemplate, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	Download(ctx context.Context, id uuid.UUID) (io.ReadCloser, *model.WordTemplate, error)
 }
 
 func (h *Handlers) Routes() http.Handler {
