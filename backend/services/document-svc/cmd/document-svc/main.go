@@ -70,7 +70,25 @@ func run() error {
 			return fmt.Errorf("storage init: %w", err)
 		}
 	case "minio", "s3":
-		return fmt.Errorf("storage kind %q not yet implemented", cfg.StorageKind)
+		st, err = storage.NewS3(
+			ctx,
+			cfg.S3Endpoint,
+			cfg.S3AccessKey,
+			cfg.S3SecretKey,
+			cfg.S3Bucket,
+			cfg.S3Region,
+			cfg.S3UseSSL,
+		)
+		if err != nil {
+			return fmt.Errorf("storage init: %w", err)
+		}
+		log.Info("object storage backend initialised",
+			slog.String("kind", cfg.StorageKind),
+			slog.String("endpoint", cfg.S3Endpoint),
+			slog.String("bucket", cfg.S3Bucket),
+			slog.String("region", cfg.S3Region),
+			slog.Bool("use_ssl", cfg.S3UseSSL),
+		)
 	default:
 		return fmt.Errorf("unknown STORAGE_KIND: %s", cfg.StorageKind)
 	}
