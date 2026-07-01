@@ -9,11 +9,11 @@
 //
 // Routing table:
 //   POST /api/v1/auth/login         -> handled locally (DB lookup)
-//   POST /api/v1/auth/refresh       -> handled locally
+//   POST /api/v1/auth/refresh       -> handled locally (TODO: revocation list)
 //   /api/v1/projects/*              -> project-svc
-//   /api/v1/documents/*             -> document-svc (TODO)
-//   /api/v1/workflows/*             -> workflow-svc
-//   /api/v1/knowledge/*             -> knowledge-svc (TODO)
+//   /api/v1/documents/*             -> document-svc
+//   /api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
+//   /api/v1/knowledge/*             -> knowledge-svc (TODO: not yet proxied)
 package main
 
 import (
@@ -98,7 +98,7 @@ func run() error {
 	routes := []proxy.Route{
 		{Prefix: "/api/v1/projects", Upstream: projectURL},
 		{Prefix: "/api/v1/documents", Upstream: documentURL},
-		{Prefix: "/api/v1/workflows", Upstream: workflowURL},
+		{Prefix: "/api/v1/bids", Upstream: workflowURL},
 	}
 	proxiedHandler := proxy.New(routes)
 	proxyWithAuth := authMiddleware(authSvc, limiter, proxiedHandler, log)
@@ -114,8 +114,8 @@ func run() error {
 	r.Handle("/api/v1/projects/*", proxyWithAuth)
 	r.Handle("/api/v1/documents", proxyWithAuth)
 	r.Handle("/api/v1/documents/*", proxyWithAuth)
-	r.Handle("/api/v1/workflows", proxyWithAuth)
-	r.Handle("/api/v1/workflows/*", proxyWithAuth)
+	r.Handle("/api/v1/bids", proxyWithAuth)
+	r.Handle("/api/v1/bids/*", proxyWithAuth)
 	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 	})

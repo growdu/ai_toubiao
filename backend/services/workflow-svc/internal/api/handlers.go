@@ -32,7 +32,7 @@ func (h *Handlers) Routes() http.Handler {
 		w.Write([]byte(`{"status":"ready"}`))
 	})
 
-	r.Route("/api/v1/workflows", func(r chi.Router) {
+	r.Route("/api/v1/bids", func(r chi.Router) {
 		r.Post("/", h.create)
 		r.Get("/", h.list)
 		r.Route("/{id}", func(r chi.Router) {
@@ -40,6 +40,10 @@ func (h *Handlers) Routes() http.Handler {
 			r.Post("/transition", h.transition)
 			r.Get("/steps", h.listSteps)
 			r.Get("/events", h.listEvents)
+			// Export endpoints
+			r.Get("/export/word", h.exportWordHandler)
+			r.Get("/export/pdf", h.exportPDFHandler)
+			r.Post("/export", h.exportDocumentHandler)
 		})
 	})
 	return r
