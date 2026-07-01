@@ -10,8 +10,7 @@ import (
 	"time"
 
 	"github.com/bidwriter/services/audit-svc/internal/model"
-	"github.com/bidwriter/services/audit-svc/internal/service"
-	"github.com/bidwriter/services/audit-svc/internal/store"
+	"github.com/bidwriter/services/audit-svc/internal/store" // for sentinel errors (store.ErrNotFound) and ChapterInfo
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
 	"github.com/go-chi/chi/v5"
@@ -19,11 +18,40 @@ import (
 )
 
 type Handlers struct {
-	Store            *store.Store
-	ChapterAuditor   *service.ChapterAuditor
-	CrossAuditor     *service.CrossAuditor
-	RejectionChecker *service.RejectionChecker
+	// Dependencies are interface-typed so tests can pass fakes without
+	// pulling in the real Postgres pool or any auditor implementations.
+	// The concrete types in store / service still satisfy these interfaces.
+	Store            AuditStore
+	ChapterAuditor   ChapterAuditorIface
+	CrossAuditor     CrossAuditorIface
+	RejectionChecker RejectionCheckerIface
 	Log              *slog.Logger
+}
+
+// AuditStore is the surface area the HTTP layer needs from store.Store.
+type AuditStore interface {
+	CreateReport(ctx context.Context, r *model.AuditReport) error
+	GetReport(ctx context.Context, bidJobID uuid.UUID) (*model.AuditReport, error)
+	UpdateReport(ctx context.Context, r *model.AuditReport) error
+	BatchInsertIssues(ctx context.Context, issues []*model.AuditIssue) error
+	GetIssuesByReportID(ctx context.Context, reportID uuid.UUID) ([]*model.AuditIssue, error)
+	ResolveIssue(ctx context.Context, issueID, userID uuid.UUID, decision string) error
+	GetBidJobWithChapters(ctx context.Context, bidJobID uuid.UUID) (*store.BidJobWithChapters, error)
+}
+
+// ChapterAuditorIface is the HTTP layer's view of *service.ChapterAuditor.
+type ChapterAuditorIface interface {
+	AuditChapter(ctx context.Context, bidJobID, tenantID uuid.UUID, chapter *store.ChapterInfo) []*model.AuditIssue
+}
+
+// CrossAuditorIface is the HTTP layer's view of *service.CrossAuditor.
+type CrossAuditorIface interface {
+	AuditCrossChapter(ctx context.Context, bidJobID, tenantID uuid.UUID, chapters []store.ChapterInfo) []*model.AuditIssue
+}
+
+// RejectionCheckerIface is the HTTP layer's view of *service.RejectionChecker.
+type RejectionCheckerIface interface {
+	CheckRejectionCriteria(ctx context.Context, bidJobID, tenantID uuid.UUID, chapters []store.ChapterInfo) []*model.AuditIssue
 }
 
 func (h *Handlers) Routes() http.Handler {

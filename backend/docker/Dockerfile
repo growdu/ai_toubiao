@@ -10,7 +10,7 @@
 #     --build-arg SERVICE_PATH=services/api-gateway \
 #     -t bidwriter/api-gateway .
 
-ARG GO_VERSION=1.23
+ARG GO_VERSION=1.25
 
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src

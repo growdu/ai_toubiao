@@ -20,3 +20,8 @@ npm-debug.log*
 .hermes/
 *.tmp
 *.bak
+
+# Build outputs / pycache (committed by accident in this session)
+backend/services/*/[a-z]*-svc
+backend/services/*/bin/
+**/__pycache__/
