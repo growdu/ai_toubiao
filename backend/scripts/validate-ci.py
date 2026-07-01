@@ -20,7 +20,7 @@ import yaml
 import re
 from pathlib import Path
 
-ROOT = Path("/work/ai/bidwriter")
+ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[2]))
 ERRORS = []
 WARNINGS = []
 OK = []

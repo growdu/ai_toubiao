@@ -108,10 +108,14 @@ coverage: ## Generate coverage report
 # Lint
 # ============================================================================
 .PHONY: lint
-lint: ## Run linters (golangci-lint + markdownlint + yaml)
-	golangci-lint run ./...
+lint: ## Run linters (golangci-lint per module + markdownlint + yaml)
+	@for svc in $(SERVICES_IMPL); do \
+		echo "  -> golangci-lint $$svc"; \
+		cd services/$$svc && golangci-lint run ./... && cd ../..; \
+	done
+	cd shared && golangci-lint run ./... && cd ..
 	markdownlint docs/ README.md AGENTS.md CONTRIBUTING.md
-	python3 scripts/validate-ci.py
+	PROJECT_ROOT=$$(cd .. && pwd) python3 scripts/validate-ci.py
 
 .PHONY: fmt
 fmt: ## Format code

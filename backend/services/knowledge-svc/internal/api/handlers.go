@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,7 +11,6 @@ import (
 	"strconv"
 
 	"github.com/bidwriter/services/knowledge-svc/internal/model"
-	"github.com/bidwriter/services/knowledge-svc/internal/service"
 	"github.com/bidwriter/services/knowledge-svc/internal/store"
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
@@ -19,8 +19,22 @@ import (
 )
 
 type Handlers struct {
-	KBService *service.KBService
+	// KBService is the dependency the handlers need. Declared as an interface
+	// (implemented by *service.KBService) so tests can pass a fake without
+	// pulling in pgvector, the embedding router, or any LLM client.
+	KBService KBAPI
 	Log       *slog.Logger
+}
+
+// KBAPI is the surface area the HTTP layer needs from the KB service.
+// Adding a method here is a contract change for every fake in tests.
+type KBAPI interface {
+	CreateMaterial(ctx context.Context, req *model.CreateMaterialRequest) (*model.KBMaterial, error)
+	ListMaterials(ctx context.Context, category string, limit, offset int) ([]*model.KBMaterial, error)
+	GetMaterial(ctx context.Context, id uuid.UUID) (*model.KBMaterial, error)
+	DeleteMaterial(ctx context.Context, id uuid.UUID) error
+	Search(ctx context.Context, tenantID uuid.UUID, req *model.SearchRequest) (*model.SearchResponse, error)
+	Ingest(ctx context.Context, req *model.IngestRequest) error
 }
 
 func (h *Handlers) Routes() http.Handler {

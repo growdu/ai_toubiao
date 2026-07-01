@@ -114,17 +114,118 @@ services:
         SERVICE_NAME: router-svc
     container_name: bidwriter-router-svc
     environment:
-      DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
+      DB_DSN: postgres://postgres:***@postgres:5432/bidwriter?sslmode=disable
       HTTP_ADDR: ":8080"
       # AI providers (override in .env). Empty key disables that provider at boot.
       ANTHROPIC_API_KEY: ""
       OPENAI_API_KEY: ""
       DEEPSEEK_API_KEY: ""
       OLLAMA_BASE_URL: ""
-      # Permissive auth for local/dev. In prod, set JWT_SECRET and AUTH_REQUIRED=true.
+      # Permissive auth for local/dev. In prod, set JWT_SECRET and AUTH_REQUIRED=***
       AUTH_REQUIRED: "false"
       LOG_LEVEL: "info"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Knowledge, Audit, Template, Billing, Notify — added in this iteration.
+  # on postgres, expose :8080 internally (api-gateway is the only public one).
+  # ===========================================================================
+  knowledge-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/knowledge-svc
+        SERVICE_NAME: knowledge-svc
+    container_name: bidwriter-knowledge-svc
+    environment:
+      DB_DSN: postgres://postgres:***@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+      ROUTER_URL: http://router-svc:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  audit-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/audit-svc
+        SERVICE_NAME: audit-svc
+    container_name: bidwriter-audit-svc
+    environment:
+      DB_DSN: postgres://postgres:***@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  template-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/template-svc
+        SERVICE_NAME: template-svc
+    container_name: bidwriter-template-svc
+    environment:
+      DB_DSN: postgres://postgres:***@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  billing-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/billing-svc
+        SERVICE_NAME: billing-svc
+    container_name: bidwriter-billing-svc
+    environment:
+      DB_DSN: postgres://postgres:***@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notify-svc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE_PATH: services/notify-svc
+        SERVICE_NAME: notify-svc
+    container_name: bidwriter-notify-svc
+    environment:
+      DB_DSN: postgres://postgres:***@postgres:5432/bidwriter?sslmode=disable
+      HTTP_ADDR: ":8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Web frontend (nginx serving the React SPA, proxying /api to api-gateway)
+  # ===========================================================================
+  web:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        VITE_API_BASE: /api
+    container_name: bidwriter-web
+    ports:
+      - "5173:80"        # host port 5173 (vite's default) → container 80
+    depends_on:
+      - api-gateway
     restart: unless-stopped

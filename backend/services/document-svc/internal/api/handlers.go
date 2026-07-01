@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,7 +14,7 @@ import (
 	"github.com/bidwriter/services/document-svc/internal/model"
 	"github.com/bidwriter/services/document-svc/internal/service"
 	"github.com/bidwriter/services/document-svc/internal/storage"
-	"github.com/bidwriter/services/document-svc/internal/store"
+	"github.com/bidwriter/services/document-svc/internal/store" // for sentinel errors (store.ErrNotFound)
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
 	"github.com/bidwriter/shared/pkg/validator"
@@ -24,11 +25,34 @@ import (
 const maxUploadBytes = 100 << 20 // 100 MB
 
 type Handlers struct {
-	Store    *store.Store
+	// Dependencies are interface-typed so tests can pass fakes without
+	// pulling in the real DB pool, file storage, or PDF/DOCX converter.
+	// The concrete types in store / service still satisfy these interfaces.
+	Store    DocumentStore
 	Storage  storage.Storage
-	Parser   *service.ParserService
-	Exporter *service.ExporterService
+	Parser   DocumentParser
+	Exporter DocumentExporter
 	Log      *slog.Logger
+}
+
+// DocumentStore is the surface area the HTTP layer needs from store.Store.
+type DocumentStore interface {
+	Create(ctx context.Context, d *model.Document) error
+	Get(ctx context.Context, id uuid.UUID) (*model.Document, error)
+	List(ctx context.Context, projectID *uuid.UUID, limit int, cursor *uuid.UUID) ([]*model.Document, error)
+	Update(ctx context.Context, id uuid.UUID, req *model.UpdateRequest) (*model.Document, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+// DocumentParser is the surface area the HTTP layer needs from service.ParserService.
+type DocumentParser interface {
+	Parse(ctx context.Context, id uuid.UUID, async bool) (*model.ParseResult, error)
+	GetParseResult(ctx context.Context, id uuid.UUID) (*model.ParseResult, error)
+}
+
+// DocumentExporter is the surface area the HTTP layer needs from service.ExporterService.
+type DocumentExporter interface {
+	Export(ctx context.Context, req *service.ExportRequest) (*service.ExportResult, error)
 }
 
 func (h *Handlers) Routes() http.Handler {
