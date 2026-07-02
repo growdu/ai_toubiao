@@ -29,6 +29,7 @@ import (
 	"github.com/bidwriter/services/knowledge-svc/internal/config"
 	"github.com/bidwriter/services/knowledge-svc/internal/middleware"
 	"github.com/bidwriter/services/knowledge-svc/internal/service"
+	"github.com/bidwriter/services/knowledge-svc/internal/storage"
 	"github.com/bidwriter/services/knowledge-svc/internal/store"
 	"github.com/bidwriter/shared/pkg/db"
 	sharedlogger "github.com/bidwriter/shared/pkg/logger"
@@ -60,7 +61,27 @@ func run() error {
 	defer pool.Close()
 
 	s := store.New(pool)
-	kbSvc := service.NewKBService(s, log, cfg.RouterURL)
+
+	var objStore service.ObjectStore
+	if cfg.MinIOEndpoint != "" {
+		mstore, mErr := storage.NewMinIO(
+			cfg.MinIOEndpoint, cfg.MinIOAccessKey, cfg.MinIOSecretKey,
+			"us-east-1", cfg.MinIOUseSSL,
+		)
+		if mErr != nil {
+			log.Warn("minio init failed; file-backed KB ingest disabled",
+				slog.String("endpoint", cfg.MinIOEndpoint),
+				slog.Any("error", mErr))
+		} else {
+			objStore = mstore
+			log.Info("minio backend ready",
+				slog.String("endpoint", cfg.MinIOEndpoint),
+				slog.String("bucket", cfg.MinIOBucket),
+				slog.Bool("use_ssl", cfg.MinIOUseSSL))
+		}
+	}
+
+	kbSvc := service.NewKBService(s, log, cfg.RouterURL, objStore, cfg.MinIOBucket)
 	h := &api.Handlers{
 		KBService: kbSvc,
 		Log:       log,
