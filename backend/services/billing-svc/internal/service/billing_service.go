@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/bidwriter/services/billing-svc/internal/model"
 )
@@ -28,7 +29,7 @@ func NewBillingService(s Store) *BillingService {
 
 // GetCurrentBudget returns the current month's budget summary.
 func (s *BillingService) GetCurrentBudget(ctx context.Context) (*model.BudgetSummary, error) {
-	month := "2026-06" // TODO: derive from current date
+	month := time.Now().UTC().Format("2006-01")
 	budget, err := s.store.GetOrCreateBudget(ctx, month)
 	if err != nil {
 		return nil, err

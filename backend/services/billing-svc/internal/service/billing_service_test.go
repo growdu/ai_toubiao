@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/bidwriter/services/billing-svc/internal/model"
 	"github.com/bidwriter/shared/pkg/tenant"
@@ -92,6 +93,25 @@ func TestGetCurrentBudget_HalfSpent_FiftyPercent(t *testing.T) {
 	}
 	if got.Budget == nil || got.Budget.Month != "2026-06" {
 		t.Errorf("expected populated budget pointer, got %+v", got.Budget)
+	}
+}
+
+func TestGetCurrentBudget_UsesCurrentUTCMonth(t *testing.T) {
+	wantMonth := time.Now().UTC().Format("2006-01")
+	var gotMonth string
+	st := &fakeStore{
+		getOrCreateBudgetFn: func(_ context.Context, month string) (*model.Budget, error) {
+			gotMonth = month
+			return &model.Budget{ID: uuid.New(), Month: month, LimitCents: 0, SpentCents: 0}, nil
+		},
+	}
+	svc := NewBillingService(st)
+
+	if _, err := svc.GetCurrentBudget(ctxWithTenant()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMonth != wantMonth {
+		t.Errorf("month passed to store = %q, want %q (current UTC month)", gotMonth, wantMonth)
 	}
 }
 
