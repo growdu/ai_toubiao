@@ -29,6 +29,8 @@ type WorkflowBackend interface {
 	Transition(ctx context.Context, id uuid.UUID, req *model.TransitionRequest, expectedVersion int, actorID uuid.UUID) (*model.Workflow, error)
 	ListSteps(ctx context.Context, workflowID uuid.UUID) ([]*model.Step, error)
 	ListEvents(ctx context.Context, workflowID uuid.UUID, limit int) ([]*model.Event, error)
+	Pause(ctx context.Context, id uuid.UUID, req *model.PauseRequest, actorID uuid.UUID) (*model.Workflow, error)
+	Resume(ctx context.Context, id uuid.UUID, req *model.ResumeRequest, actorID uuid.UUID) (*model.Workflow, error)
 }
 
 type Handlers struct {
@@ -55,6 +57,9 @@ func (h *Handlers) Routes() http.Handler {
 			r.Post("/transition", h.transition)
 			r.Get("/steps", h.listSteps)
 			r.Get("/events", h.listEvents)
+			// HIL endpoints (human-in-the-loop pause/resume)
+			r.Post("/pause", h.pause)
+			r.Post("/resume", h.resume)
 			// Export endpoints
 			r.Get("/export/word", h.exportWordHandler)
 			r.Get("/export/pdf", h.exportPDFHandler)
@@ -209,6 +214,91 @@ func (h *Handlers) listSteps(w http.ResponseWriter, r *http.Request) {
 		"data": steps,
 		"meta": map[string]any{"count": len(steps)},
 	})
+}
+
+// pause moves an active workflow to StatePaused and records the previous
+// state in metadata.paused_from so the matching resume call knows where to
+// go back to. Terminal / failed / already-paused workflows are rejected by
+// the underlying state machine (ErrInvalidState → 422).
+func (h *Handlers) pause(w http.ResponseWriter, r *http.Request) {
+	h.lifecycleAction(w, r, false)
+}
+
+// resume returns a paused workflow to its previous state (or to the
+// explicit `to` in the request body). Rejects anything not currently
+// paused (ErrInvalidState → 422).
+func (h *Handlers) resume(w http.ResponseWriter, r *http.Request) {
+	h.lifecycleAction(w, r, true)
+}
+
+// lifecycleAction is the shared pause/resume dispatcher. It validates the
+// workflow id, parses the request body, requires X-User-ID, and translates
+// domain errors to HTTP envelopes. The store is responsible for the
+// metadata merge and the actual state transition.
+func (h *Handlers) lifecycleAction(w http.ResponseWriter, r *http.Request, isResume bool) {
+	rid := logger.RequestIDFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httperr.InvalidInput(w, rid, "invalid id", nil)
+		return
+	}
+	actorID := r.Header.Get("X-User-ID")
+	if actorID == "" {
+		httperr.Write(w, http.StatusBadRequest, httperr.CodeInvalidInput, "缺少 X-User-ID", rid, nil)
+		return
+	}
+
+	var (
+		wf *model.Workflow
+		e  error
+	)
+	if isResume {
+		// Resume accepts an optional `to`; an empty body is fine — the store
+		// falls back to metadata.paused_from.
+		var req model.ResumeRequest
+		if r.ContentLength != 0 {
+			if err := readJSON(r.Body, &req); err != nil {
+				httperr.InvalidInput(w, rid, "invalid JSON", nil)
+				return
+			}
+		}
+		if err := validator.Validate(&req); err != nil {
+			httperr.InvalidInput(w, rid, err.Error(), nil)
+			return
+		}
+		wf, e = h.Store.Resume(r.Context(), id, &req, uuid.MustParse(actorID))
+	} else {
+		var req model.PauseRequest
+		if r.ContentLength != 0 {
+			if err := readJSON(r.Body, &req); err != nil {
+				httperr.InvalidInput(w, rid, "invalid JSON", nil)
+				return
+			}
+		}
+		if err := validator.Validate(&req); err != nil {
+			httperr.InvalidInput(w, rid, err.Error(), nil)
+			return
+		}
+		wf, e = h.Store.Pause(r.Context(), id, &req, uuid.MustParse(actorID))
+	}
+
+	switch {
+	case errors.Is(e, store.ErrNotFound):
+		httperr.NotFound(w, rid, "workflow")
+	case errors.Is(e, store.ErrInvalidState):
+		msg := "工作流当前状态不允许暂停"
+		if isResume {
+			msg = "工作流未处于暂停状态,无法恢复"
+		}
+		httperr.Write(w, http.StatusUnprocessableEntity, httperr.CodeInvalidInput, msg, rid, nil)
+	case errors.Is(e, store.ErrVersionConflict):
+		httperr.Write(w, http.StatusConflict, httperr.CodeVersionConflict, "版本冲突", rid, nil)
+	case e != nil:
+		h.Log.Error("lifecycle", slog.String("err", e.Error()))
+		httperr.InternalError(w, rid)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"data": wf})
+	}
 }
 
 func (h *Handlers) listEvents(w http.ResponseWriter, r *http.Request) {

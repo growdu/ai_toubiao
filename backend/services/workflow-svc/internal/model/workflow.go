@@ -110,6 +110,19 @@ type TransitionRequest struct {
 	Reason string `json:"reason" validate:"omitempty,max=500"`
 }
 
+// PauseRequest is the API payload for POST /bids/{id}/pause.
+type PauseRequest struct {
+	Reason string `json:"reason" validate:"omitempty,max=500"`
+}
+
+// ResumeRequest is the API payload for POST /bids/{id}/resume. `To` is
+// optional — when omitted, the workflow resumes to whatever state was
+// recorded by the matching Pause call (i.e. metadata.paused_from).
+type ResumeRequest struct {
+	To     State  `json:"to"     validate:"omitempty,oneof=parsing outlining facts generating auditing exporting"`
+	Reason string `json:"reason" validate:"omitempty,max=500"`
+}
+
 // StepUpdateRequest updates progress on a step.
 type StepUpdateRequest struct {
 	Status     *StepStatus `json:"status"     validate:"omitempty,oneof=pending running succeeded failed skipped"`

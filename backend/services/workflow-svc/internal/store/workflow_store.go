@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -269,6 +270,241 @@ func (s *Store) Transition(ctx context.Context, id uuid.UUID, req *model.Transit
 		return nil, err
 	}
 	return &updated, nil
+}
+
+// Pause transitions an active workflow to StatePaused, recording the
+// previous state in metadata.paused_from so Resume can return there.
+// Reuses transitionInternal so the state machine validation, optimistic
+// locking, step status update, and audit event are identical to a regular
+// transition.
+func (s *Store) Pause(ctx context.Context, id uuid.UUID, req *model.PauseRequest, actorID uuid.UUID) (*model.Workflow, error) {
+	tid, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tenantID := uuid.MustParse(tid)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	current, err := lockWorkflowForUpdate(ctx, tx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := state.Validate(current.Status, model.StatePaused); err != nil {
+		return nil, ErrInvalidState
+	}
+
+	newMeta := setPausedFrom(current.Metadata, current.Status)
+
+	tr := &model.TransitionRequest{To: model.StatePaused, Reason: req.Reason}
+	return s.transitionInternal(ctx, tx, current, tr, actorID, newMeta)
+}
+
+// Resume returns a paused workflow to its recorded paused_from state (or
+// to the explicit `to` in the request body) and clears paused_from.
+func (s *Store) Resume(ctx context.Context, id uuid.UUID, req *model.ResumeRequest, actorID uuid.UUID) (*model.Workflow, error) {
+	tid, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tenantID := uuid.MustParse(tid)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	current, err := lockWorkflowForUpdate(ctx, tx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Status != model.StatePaused {
+		return nil, ErrInvalidState
+	}
+
+	target := req.To
+	if target == "" {
+		var ok bool
+		target, ok = pausedFrom(current.Metadata)
+		if !ok {
+			return nil, ErrInvalidState
+		}
+	}
+	if err := state.Validate(model.StatePaused, target); err != nil {
+		return nil, ErrInvalidState
+	}
+
+	newMeta := clearPausedFrom(current.Metadata)
+
+	tr := &model.TransitionRequest{To: target, Reason: req.Reason}
+	return s.transitionInternal(ctx, tx, current, tr, actorID, newMeta)
+}
+
+// transitionInternal is the shared body of Transition / Pause / Resume.
+// It applies the state change, writes the (optional) metadata override,
+// updates the matching step status, and writes the audit event — all in
+// the caller's transaction. The caller is responsible for the initial
+// FOR UPDATE row lock (lockWorkflowForUpdate) and for the state-machine
+// validation that distinguishes the three call sites.
+func (s *Store) transitionInternal(
+	ctx context.Context, tx pgx.Tx,
+	current *model.Workflow, req *model.TransitionRequest, actorID uuid.UUID,
+	metadataOverride []byte,
+) (*model.Workflow, error) {
+	now := time.Now()
+	stepName, _ := state.StepForState(req.To)
+	var startedAt, finishedAt *time.Time
+	switch req.To {
+	case model.StatePending:
+		startedAt = nil
+		finishedAt = nil
+	case model.StateParsing:
+		t := now
+		startedAt = &t
+	case model.StateDone, model.StateCancelled, model.StateFailed:
+		t := now
+		finishedAt = &t
+	}
+
+	const updateQ = `
+		UPDATE workflows
+		SET status = $1,
+		    current_step = COALESCE($2, current_step),
+		    error = CASE WHEN $1 = 'failed' THEN $3 ELSE NULL END,
+		    started_at = COALESCE($4, started_at),
+		    finished_at = $5,
+		    metadata = COALESCE($6::jsonb, metadata),
+		    version = version + 1,
+		    updated_at = NOW()
+		WHERE id = $7 AND tenant_id = $8
+		RETURNING id, tenant_id, project_id, status, current_step, error, metadata,
+		          started_at, finished_at, created_by, version, created_at, updated_at`
+	var cnStep *string
+	if stepName != "" {
+		s := string(stepName)
+		cnStep = &s
+	}
+	var updated model.Workflow
+	var metaArg any
+	if len(metadataOverride) > 0 {
+		metaArg = string(metadataOverride)
+	}
+	err := tx.QueryRow(ctx, updateQ, req.To, cnStep, req.Reason, startedAt, finishedAt, metaArg, current.ID, current.TenantID).Scan(
+		&updated.ID, &updated.TenantID, &updated.ProjectID, &updated.Status,
+		&updated.CurrentStep, &updated.Error, &updated.Metadata,
+		&updated.StartedAt, &updated.FinishedAt, &updated.CreatedBy,
+		&updated.Version, &updated.CreatedAt, &updated.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if stepName != "" {
+		var stepStatus model.StepStatus
+		switch req.To {
+		case model.StateFailed:
+			stepStatus = model.StepFailed
+		case model.StateDone:
+			stepStatus = model.StepSucceeded
+		default:
+			stepStatus = model.StepRunning
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE workflow_steps
+			SET status = $1,
+			    progress = CASE WHEN $1 = 'succeeded' THEN 100 ELSE progress END,
+			    started_at = COALESCE(started_at, NOW()),
+			    finished_at = CASE WHEN $1 IN ('succeeded','failed') THEN NOW() ELSE finished_at END
+			WHERE workflow_id = $2 AND name = $3`,
+			stepStatus, current.ID, stepName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO workflow_events (workflow_id, tenant_id, from_state, to_state, actor_id, reason)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		current.ID, current.TenantID, current.Status, req.To, actorID, req.Reason)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+// lockWorkflowForUpdate selects a workflow row inside an open transaction
+// with FOR UPDATE, returning ErrNotFound if it doesn't exist (or has been
+// soft-deleted). Used by Transition, Pause, and Resume as their first step.
+func lockWorkflowForUpdate(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) (*model.Workflow, error) {
+	var w model.Workflow
+	err := tx.QueryRow(ctx, `
+		SELECT id, tenant_id, project_id, status, metadata, version, created_by
+		FROM workflows
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		FOR UPDATE`, id, tenantID).Scan(
+		&w.ID, &w.TenantID, &w.ProjectID, &w.Status, &w.Metadata, &w.Version, &w.CreatedBy,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// setPausedFrom returns a copy of metadata with `paused_from` set to the
+// given state. If metadata is empty or invalid JSON, it is treated as {}.
+func setPausedFrom(metadata []byte, from model.State) []byte {
+	m := ensureJSONObject(metadata)
+	m["paused_from"] = string(from)
+	return marshalJSON(m)
+}
+
+// clearPausedFrom returns a copy of metadata with `paused_from` removed.
+func clearPausedFrom(metadata []byte) []byte {
+	m := ensureJSONObject(metadata)
+	delete(m, "paused_from")
+	return marshalJSON(m)
+}
+
+// pausedFrom extracts the recorded paused_from state, if any.
+func pausedFrom(metadata []byte) (model.State, bool) {
+	m := ensureJSONObject(metadata)
+	v, ok := m["paused_from"]
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return model.State(s), ok && s != ""
+}
+
+func ensureJSONObject(b []byte) map[string]any {
+	if len(b) == 0 {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil || m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+func marshalJSON(m map[string]any) []byte {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
 }
 
 func (s *Store) ListSteps(ctx context.Context, workflowID uuid.UUID) ([]*model.Step, error) {

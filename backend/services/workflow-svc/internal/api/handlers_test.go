@@ -19,12 +19,14 @@ import (
 
 // fakeBackend is a hand-rolled in-memory WorkflowBackend for handler tests.
 type fakeBackend struct {
-	createFn       func(context.Context, *model.CreateRequest, uuid.UUID) (*model.Workflow, error)
-	getFn          func(context.Context, uuid.UUID) (*model.Workflow, error)
-	listFn         func(context.Context, *uuid.UUID, *model.State, int) ([]*model.Workflow, error)
-	transitionFn   func(context.Context, uuid.UUID, *model.TransitionRequest, int, uuid.UUID) (*model.Workflow, error)
-	listStepsFn    func(context.Context, uuid.UUID) ([]*model.Step, error)
-	listEventsFn   func(context.Context, uuid.UUID, int) ([]*model.Event, error)
+	createFn     func(context.Context, *model.CreateRequest, uuid.UUID) (*model.Workflow, error)
+	getFn        func(context.Context, uuid.UUID) (*model.Workflow, error)
+	listFn       func(context.Context, *uuid.UUID, *model.State, int) ([]*model.Workflow, error)
+	transitionFn func(context.Context, uuid.UUID, *model.TransitionRequest, int, uuid.UUID) (*model.Workflow, error)
+	listStepsFn  func(context.Context, uuid.UUID) ([]*model.Step, error)
+	listEventsFn func(context.Context, uuid.UUID, int) ([]*model.Event, error)
+	pauseFn      func(context.Context, uuid.UUID, *model.PauseRequest, uuid.UUID) (*model.Workflow, error)
+	resumeFn     func(context.Context, uuid.UUID, *model.ResumeRequest, uuid.UUID) (*model.Workflow, error)
 }
 
 func (f *fakeBackend) Create(ctx context.Context, req *model.CreateRequest, actorID uuid.UUID) (*model.Workflow, error) {
@@ -44,6 +46,12 @@ func (f *fakeBackend) ListSteps(ctx context.Context, id uuid.UUID) ([]*model.Ste
 }
 func (f *fakeBackend) ListEvents(ctx context.Context, id uuid.UUID, l int) ([]*model.Event, error) {
 	return f.listEventsFn(ctx, id, l)
+}
+func (f *fakeBackend) Pause(ctx context.Context, id uuid.UUID, r *model.PauseRequest, a uuid.UUID) (*model.Workflow, error) {
+	return f.pauseFn(ctx, id, r, a)
+}
+func (f *fakeBackend) Resume(ctx context.Context, id uuid.UUID, r *model.ResumeRequest, a uuid.UUID) (*model.Workflow, error) {
+	return f.resumeFn(ctx, id, r, a)
 }
 
 func newTestHandler(b WorkflowBackend) *Handlers {
@@ -286,6 +294,126 @@ func TestListEvents_Success(t *testing.T) {
 		"/api/v1/bids/"+uuid.NewString()+"/events?limit=50", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPause_Success(t *testing.T) {
+	id := uuid.New()
+	updated := &model.Workflow{ID: id, Status: model.StatePaused, Version: 2}
+	be := &fakeBackend{
+		pauseFn: func(_ context.Context, _ uuid.UUID, r *model.PauseRequest, a uuid.UUID) (*model.Workflow, error) {
+			if r.Reason != "need review" {
+				t.Errorf("reason = %q, want %q", r.Reason, "need review")
+			}
+			if a == uuid.Nil {
+				t.Errorf("actor = uuid.Nil, want non-nil")
+			}
+			return updated, nil
+		},
+	}
+	h := newTestHandler(be)
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/"+id.String()+"/pause",
+		map[string]any{"reason": "need review"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Data *model.Workflow `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Data == nil || got.Data.Status != model.StatePaused {
+		t.Errorf("unexpected response: %+v", got)
+	}
+}
+
+func TestPause_StoreErrorPropagates(t *testing.T) {
+	wantErr := errors.New("db down")
+	be := &fakeBackend{
+		pauseFn: func(context.Context, uuid.UUID, *model.PauseRequest, uuid.UUID) (*model.Workflow, error) {
+			return nil, wantErr
+		},
+	}
+	h := newTestHandler(be)
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/"+uuid.NewString()+"/pause", nil)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
+	}
+}
+
+func TestPause_InvalidStatePropagates(t *testing.T) {
+	be := &fakeBackend{
+		pauseFn: func(context.Context, uuid.UUID, *model.PauseRequest, uuid.UUID) (*model.Workflow, error) {
+			return nil, store.ErrInvalidState
+		},
+	}
+	h := newTestHandler(be)
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/"+uuid.NewString()+"/pause", nil)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", w.Code)
+	}
+}
+
+func TestPause_InvalidID(t *testing.T) {
+	h := newTestHandler(&fakeBackend{})
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/not-a-uuid/pause", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestResume_Success(t *testing.T) {
+	id := uuid.New()
+	updated := &model.Workflow{ID: id, Status: model.StateGenerating, Version: 3}
+	be := &fakeBackend{
+		resumeFn: func(_ context.Context, _ uuid.UUID, r *model.ResumeRequest, a uuid.UUID) (*model.Workflow, error) {
+			if r.To != model.StateGenerating {
+				t.Errorf("to = %s, want generating", r.To)
+			}
+			if a == uuid.Nil {
+				t.Errorf("actor = uuid.Nil, want non-nil")
+			}
+			return updated, nil
+		},
+	}
+	h := newTestHandler(be)
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/"+id.String()+"/resume",
+		map[string]any{"to": "generating", "reason": "looks good"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestResume_NotPausedRejected(t *testing.T) {
+	be := &fakeBackend{
+		resumeFn: func(context.Context, uuid.UUID, *model.ResumeRequest, uuid.UUID) (*model.Workflow, error) {
+			return nil, store.ErrInvalidState
+		},
+	}
+	h := newTestHandler(be)
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/"+uuid.NewString()+"/resume", nil)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", w.Code)
+	}
+}
+
+func TestResume_NotFound(t *testing.T) {
+	be := &fakeBackend{
+		resumeFn: func(context.Context, uuid.UUID, *model.ResumeRequest, uuid.UUID) (*model.Workflow, error) {
+			return nil, store.ErrNotFound
+		},
+	}
+	h := newTestHandler(be)
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/"+uuid.NewString()+"/resume", nil)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestResume_InvalidID(t *testing.T) {
+	h := newTestHandler(&fakeBackend{})
+	w := doRequest(t, h.Routes(), http.MethodPost, "/api/v1/bids/not-a-uuid/resume", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 
