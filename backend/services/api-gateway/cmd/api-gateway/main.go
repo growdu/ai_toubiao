@@ -13,7 +13,7 @@
 //   /api/v1/projects/*              -> project-svc
 //   /api/v1/documents/*             -> document-svc
 //   /api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
-//   /api/v1/knowledge/*             -> knowledge-svc (TODO: not yet proxied)
+//   /api/v1/knowledge/*             -> knowledge-svc
 package main
 
 import (
@@ -82,23 +82,9 @@ func run() error {
 	})
 
 	// ---- Protected proxy routes ----
-	projectURL, err := url.Parse(cfg.ProjectSvcURL)
+	routes, err := buildRoutes(cfg)
 	if err != nil {
-		return fmt.Errorf("PROJECT_SVC_URL: %w", err)
-	}
-	documentURL, err := url.Parse(cfg.DocumentSvcURL)
-	if err != nil {
-		return fmt.Errorf("DOCUMENT_SVC_URL: %w", err)
-	}
-	workflowURL, err := url.Parse(cfg.WorkflowSvcURL)
-	if err != nil {
-		return fmt.Errorf("WORKFLOW_SVC_URL: %w", err)
-	}
-
-	routes := []proxy.Route{
-		{Prefix: "/api/v1/projects", Upstream: projectURL},
-		{Prefix: "/api/v1/documents", Upstream: documentURL},
-		{Prefix: "/api/v1/bids", Upstream: workflowURL},
+		return fmt.Errorf("routes: %w", err)
 	}
 	proxiedHandler := proxy.New(routes)
 	proxyWithAuth := authMiddleware(authSvc, limiter, proxiedHandler, log)
@@ -116,6 +102,8 @@ func run() error {
 	r.Handle("/api/v1/documents/*", proxyWithAuth)
 	r.Handle("/api/v1/bids", proxyWithAuth)
 	r.Handle("/api/v1/bids/*", proxyWithAuth)
+	r.Handle("/api/v1/knowledge", proxyWithAuth)
+	r.Handle("/api/v1/knowledge/*", proxyWithAuth)
 	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 	})
@@ -220,6 +208,45 @@ func authMiddleware(svc *auth.Service, limiter *ratelimit.Limiter, next http.Han
 }
 
 // ---- handlers ----
+
+// buildRoutes constructs the proxy route table from upstream URLs. The
+// function is exported at package scope (not method-scoped) so that
+// cmd/api-gateway/main_test.go can exercise it without standing up the full
+// server. Adding a new upstream service means: add a Config field, add an
+// entry here, and add the matching chi.Handle() line in run().
+func buildRoutes(cfg *config.Config) ([]proxy.Route, error) {
+	parse := func(envName, raw string) (*url.URL, error) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", envName, err)
+		}
+		return u, nil
+	}
+
+	projectURL, err := parse("PROJECT_SVC_URL", cfg.ProjectSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	documentURL, err := parse("DOCUMENT_SVC_URL", cfg.DocumentSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	workflowURL, err := parse("WORKFLOW_SVC_URL", cfg.WorkflowSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	knowledgeURL, err := parse("KNOWLEDGE_SVC_URL", cfg.KnowledgeSvcURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return []proxy.Route{
+		{Prefix: "/api/v1/projects", Upstream: projectURL},
+		{Prefix: "/api/v1/documents", Upstream: documentURL},
+		{Prefix: "/api/v1/bids", Upstream: workflowURL},
+		{Prefix: "/api/v1/knowledge", Upstream: knowledgeURL},
+	}, nil
+}
 
 func loginHandler(svc *auth.Service, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
