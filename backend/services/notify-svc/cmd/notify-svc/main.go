@@ -44,7 +44,19 @@ func run() error {
 	defer pool.Close()
 
 	s := store.New(pool)
-	svc := service.NewNotifyService(s)
+	notifier := service.NewNotifier(
+		service.NewSMTPDialer(service.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUser,
+			Password: cfg.SMTPPassword,
+			From:     env("SMTP_FROM", "noreply@bidwriter.local"),
+		}),
+		service.NewHTTPTransport(10*time.Second),
+		env("SMTP_FROM", "noreply@bidwriter.local"),
+		env("SMTP_SUBJECT_PREFIX", "[bidwriter] "),
+	)
+	svc := service.NewNotifyService(s, notifier)
 	h := &api.Handlers{Service: svc, Log: log}
 	router := h.Routes()
 	handler := middleware.RequestID(middleware.Recover(log)(middleware.Logger(log)(router)))
@@ -74,4 +86,18 @@ func run() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func mustEnv(key string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	panic("required env var not set: " + key)
 }

@@ -74,6 +74,12 @@ type SendRequest struct {
 	Subject   string          `json:"subject"`
 	Body      string          `json:"body" validate:"required"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	// Address is the per-channel destination: SMTP "to" address for email,
+	// full DingTalk / WeCom webhook URL (including access_token) for
+	// webhooks. Looked up from the user's NotificationPreference row when
+	// the call originates from NotifyBidGenerated / friends; passed
+	// through directly when the request comes from POST /send.
+	Address   string `json:"address,omitempty"`
 }
 
 // UpdatePreferenceRequest for updating channel preferences.

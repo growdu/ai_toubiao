@@ -61,35 +61,18 @@ func ctxWithTenant() context.Context {
 	return tenant.WithTenant(context.Background(), uuid.NewString())
 }
 
-func newTestService(s Store) *NotifyService {
-	return &NotifyService{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+func newTestService(s Store, n *Notifier) *NotifyService {
+	return &NotifyService{
+		store:    s,
+		notifier: n,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
 }
 
-// withSenders temporarily replaces the channelSenders dispatch table for the
-// duration of a test, and restores the original values via t.Cleanup. The
-// caller passes a partial map; entries not present are left as-is.
-func withSenders(t *testing.T, m map[model.Channel]channelSenderFn) {
-	t.Helper()
-	orig := make(map[model.Channel]channelSenderFn, len(channelSenders))
-	for k, v := range channelSenders {
-		orig[k] = v
-	}
-	for k, v := range m {
-		if v == nil {
-			delete(channelSenders, k)
-		} else {
-			channelSenders[k] = v
-		}
-	}
-	t.Cleanup(func() {
-		// Restore: clear and re-add originals.
-		for k := range channelSenders {
-			delete(channelSenders, k)
-		}
-		for k, v := range orig {
-			channelSenders[k] = v
-		}
-	})
+// notifierFromFakes is a shorthand for a notifier backed by the given fake
+// transports, used by every Send test below.
+func notifierFromFakes(s *fakeSMTPDialer, w *fakeTransport) *Notifier {
+	return NewNotifier(s, w, "noreply@example.com", "[bidwriter] ")
 }
 
 // ---- Send ----
@@ -114,18 +97,13 @@ func TestSend_Email_HappyPath_StatusSent(t *testing.T) {
 			return nil
 		},
 	}
-	// Inject a successful email sender.
-	withSenders(t, map[model.Channel]channelSenderFn{
-		model.ChannelEmail: func(*model.SendRequest) error { return nil },
-	})
+	dialer := &fakeSMTPDialer{} // returns nil -> success
+	svc := newTestService(st, notifierFromFakes(dialer, &fakeTransport{}))
 
-	svc := newTestService(st)
 	err := svc.Send(ctxWithTenant(), &model.SendRequest{
-		Type:    model.TypeBidGenerated,
-		Channel: model.ChannelEmail,
-		UserID:  uuid.New(),
-		Subject: "hi",
-		Body:    "there",
+		Type: model.TypeBidGenerated, Channel: model.ChannelEmail,
+		UserID: uuid.New(), Subject: "hi", Body: "there",
+		Address: "alice@example.com",
 	})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -151,6 +129,9 @@ func TestSend_Email_HappyPath_StatusSent(t *testing.T) {
 	if lastUpdateID != lastCreated.ID {
 		t.Errorf("UpdateLog id (%s) != CreateLog id (%s)", lastUpdateID, lastCreated.ID)
 	}
+	if len(dialer.calls) != 1 || dialer.calls[0].addr != "alice@example.com" {
+		t.Errorf("dialer.calls = %+v, want one call to alice@example.com", dialer.calls)
+	}
 }
 
 func TestSend_UnknownChannel_LogsFailedAndReturnsError(t *testing.T) {
@@ -162,12 +143,10 @@ func TestSend_UnknownChannel_LogsFailedAndReturnsError(t *testing.T) {
 			return nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, notifierFromFakes(&fakeSMTPDialer{}, &fakeTransport{}))
 	err := svc.Send(ctxWithTenant(), &model.SendRequest{
-		Type:    model.TypeBidGenerated,
-		Channel: model.Channel("sms"), // unsupported
-		UserID:  uuid.New(),
-		Body:    "x",
+		Type: model.TypeBidGenerated, Channel: model.Channel("sms"),
+		UserID: uuid.New(), Body: "x",
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown channel")
@@ -183,7 +162,11 @@ func TestSend_UnknownChannel_LogsFailedAndReturnsError(t *testing.T) {
 	}
 }
 
-func TestSend_Email_NotImplemented_StatusFailedWithError(t *testing.T) {
+// Notifier-not-configured replaces the old "defaultEmailSender is a
+// placeholder" test. It exercises the production wiring error path: a
+// service constructed with a nil notifier (e.g. tests, or a misconfigured
+// cmd/main.go) returns ErrNotifierNotConfigured.
+func TestSend_NilNotifier_ReturnsErrNotifierNotConfigured(t *testing.T) {
 	var updateStatus, updateErr string
 	st := &fakeStore{
 		updateLogFn: func(_ context.Context, _ uuid.UUID, status, errMsg string) error {
@@ -192,28 +175,19 @@ func TestSend_Email_NotImplemented_StatusFailedWithError(t *testing.T) {
 			return nil
 		},
 	}
-	// Use the real defaultEmailSender (returns "not yet implemented").
-	// Clear any test override from a previous subtest.
-	withSenders(t, nil)
-
-	svc := newTestService(st)
+	svc := newTestService(st, nil) // intentionally nil notifier
 	err := svc.Send(ctxWithTenant(), &model.SendRequest{
-		Type:    model.TypeBidGenerated,
-		Channel: model.ChannelEmail,
-		UserID:  uuid.New(),
-		Body:    "x",
+		Type: model.TypeBidGenerated, Channel: model.ChannelEmail,
+		UserID: uuid.New(), Body: "x",
 	})
-	if err == nil {
-		t.Fatal("expected error from not-yet-implemented sender")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("err = %v, want one mentioning 'not yet implemented'", err)
+	if !errors.Is(err, ErrNotifierNotConfigured) {
+		t.Errorf("err = %v, want ErrNotifierNotConfigured", err)
 	}
 	if updateStatus != "failed" {
 		t.Errorf("log status = %q, want failed", updateStatus)
 	}
-	if !strings.Contains(updateErr, "not yet implemented") {
-		t.Errorf("log err = %q, want one mentioning 'not yet implemented'", updateErr)
+	if !strings.Contains(updateErr, "not configured") {
+		t.Errorf("log err = %q, want one mentioning 'not configured'", updateErr)
 	}
 }
 
@@ -224,12 +198,10 @@ func TestSend_NoTenant_ReturnsErrorAndDoesNotCallStore(t *testing.T) {
 			return nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, notifierFromFakes(&fakeSMTPDialer{}, &fakeTransport{}))
 	err := svc.Send(context.Background(), &model.SendRequest{
-		Type:    model.TypeBidGenerated,
-		Channel: model.ChannelEmail,
-		UserID:  uuid.New(),
-		Body:    "x",
+		Type: model.TypeBidGenerated, Channel: model.ChannelEmail,
+		UserID: uuid.New(), Body: "x",
 	})
 	if err == nil {
 		t.Fatal("expected error when tenant is missing")
@@ -242,27 +214,31 @@ func TestSend_NoTenant_ReturnsErrorAndDoesNotCallStore(t *testing.T) {
 func TestSend_CreateLogError_PropagatesAndSkipsSend(t *testing.T) {
 	wantErr := errors.New("db down on create")
 	calledSender := false
+	dialer := &fakeSMTPDialer{}
+	dialer.sendErr = nil // would succeed; but we expect not to be called
+	// Use a custom responder that records calls.
+	capture := &fakeTransport{
+		responder: func(_ string, _ []byte) (int, []byte, error) {
+			calledSender = true
+			return 200, []byte(`{}`), nil
+		},
+	}
 	st := &fakeStore{
 		createLogFn: func(context.Context, *model.NotificationLog) error { return wantErr },
 	}
-	withSenders(t, map[model.Channel]channelSenderFn{
-		model.ChannelEmail: func(*model.SendRequest) error {
-			calledSender = true
-			return nil
-		},
-	})
-	svc := newTestService(st)
+	svc := newTestService(st, notifierFromFakes(dialer, capture))
 	err := svc.Send(ctxWithTenant(), &model.SendRequest{
-		Type:    model.TypeBidGenerated,
-		Channel: model.ChannelEmail,
-		UserID:  uuid.New(),
-		Body:    "x",
+		Type: model.TypeBidGenerated, Channel: model.ChannelEmail,
+		UserID: uuid.New(), Body: "x", Address: "x@y.z",
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
+	if len(dialer.calls) != 0 {
+		t.Errorf("smtp should not be called when CreateLog fails, got %d calls", len(dialer.calls))
+	}
 	if calledSender {
-		t.Error("channel sender should not be called when CreateLog fails")
+		t.Error("webhook transport should not be called when CreateLog fails (only used for DingTalk/WeCom)")
 	}
 }
 
@@ -272,15 +248,11 @@ func TestSend_UpdateLogError_LoggedButSendReturnsOriginalErr(t *testing.T) {
 	st := &fakeStore{
 		updateLogFn: func(context.Context, uuid.UUID, string, string) error { return updateErr },
 	}
-	withSenders(t, map[model.Channel]channelSenderFn{
-		model.ChannelEmail: func(*model.SendRequest) error { return sendErr },
-	})
-	svc := newTestService(st)
+	dialer := &fakeSMTPDialer{sendErr: sendErr}
+	svc := newTestService(st, notifierFromFakes(dialer, &fakeTransport{}))
 	err := svc.Send(ctxWithTenant(), &model.SendRequest{
-		Type:    model.TypeBidGenerated,
-		Channel: model.ChannelEmail,
-		UserID:  uuid.New(),
-		Body:    "x",
+		Type: model.TypeBidGenerated, Channel: model.ChannelEmail,
+		UserID: uuid.New(), Body: "x", Address: "x@y.z",
 	})
 	if !errors.Is(err, sendErr) {
 		t.Errorf("Send returned err = %v, want original sendErr %v (UpdateLog failure should not mask it)", err, sendErr)
@@ -301,7 +273,7 @@ func TestCreatePreference_StoreErrorPropagates(t *testing.T) {
 			return wantErr
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	got, err := svc.CreatePreference(ctxWithTenant(), uuid.New(), &model.CreatePreferenceRequest{
 		Channel:          model.ChannelEmail,
 		NotificationType: model.TypeBidGenerated,
@@ -330,7 +302,7 @@ func TestCreatePreference_Success_PopulatesTenantAndUser(t *testing.T) {
 			return nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	got2, err := svc.CreatePreference(
 		tenant.WithTenant(context.Background(), tenantID),
 		userID,
@@ -368,7 +340,7 @@ func TestListPreferences_PassesThrough(t *testing.T) {
 			return want, nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	got, err := svc.ListPreferences(ctxWithTenant())
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -392,7 +364,7 @@ func TestUpdatePreference_StoreErrorPropagates(t *testing.T) {
 			return wantErr
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	id := uuid.New()
 	err := svc.UpdatePreference(ctxWithTenant(), id, &model.UpdatePreferenceRequest{
 		Enabled: true, Address: "new@example.com",
@@ -417,7 +389,7 @@ func TestDeletePreference_StoreErrorPropagates(t *testing.T) {
 			return wantErr
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	id := uuid.New()
 	err := svc.DeletePreference(ctxWithTenant(), id)
 	if !errors.Is(err, wantErr) {
@@ -433,9 +405,8 @@ func TestDeletePreference_StoreErrorPropagates(t *testing.T) {
 // These helpers spawn goroutines that call Send, so the send itself is not
 // deterministically observable in a test. The deterministic contract is the
 // "no enabled prefs" branch: the method must return nil without spawning
-// any goroutine. We assert that by giving the store a panic-on-call
-// FindPreferences and confirming the helper does not invoke the store path
-// (i.e. it doesn't crash even when there are no prefs to act on).
+// any goroutine. We assert that by giving the store a FindPreferences that
+// returns empty, and confirming the helper does not call Send.
 
 func TestNotifyBidGenerated_NoEnabledPrefs_ReturnsNilNoSpawn(t *testing.T) {
 	storeCalled := false
@@ -445,7 +416,7 @@ func TestNotifyBidGenerated_NoEnabledPrefs_ReturnsNilNoSpawn(t *testing.T) {
 			return nil, nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	if err := svc.NotifyBidGenerated(ctxWithTenant(), uuid.New(), "Test Bid"); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -462,7 +433,7 @@ func TestNotifyAuditCompleted_NoEnabledPrefs_ReturnsNilNoSpawn(t *testing.T) {
 			return nil, nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	if err := svc.NotifyAuditCompleted(ctxWithTenant(), uuid.New(), "Test Bid", true); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -479,7 +450,7 @@ func TestNotifyBudgetExhausted_NoEnabledPrefs_ReturnsNilNoSpawn(t *testing.T) {
 			return nil, nil
 		},
 	}
-	svc := newTestService(st)
+	svc := newTestService(st, nil)
 	if err := svc.NotifyBudgetExhausted(ctxWithTenant(), uuid.New(), 85); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -487,11 +458,3 @@ func TestNotifyBudgetExhausted_NoEnabledPrefs_ReturnsNilNoSpawn(t *testing.T) {
 		t.Error("FindPreferences should be called even when no prefs exist")
 	}
 }
-
-// Ensure the package-level variables are referenced so go-vet / goimports
-// don't complain about unused symbols on refactors.
-var (
-	_ = defaultEmailSender
-	_ = defaultDingTalkSender
-	_ = defaultWeComSender
-)

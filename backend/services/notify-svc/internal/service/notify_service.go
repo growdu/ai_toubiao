@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -24,39 +25,40 @@ type Store interface {
 	FindPreferences(ctx context.Context, userID uuid.UUID, notifType model.NotificationType) ([]*model.NotificationPreference, error)
 }
 
-// channelSenderFn is the per-channel dispatch function used by Send. It is
-// looked up in the package-level channelSenders map (a test seam).
-type channelSenderFn func(*model.SendRequest) error
-
-// channelSenders is the dispatch table for Send. The default entries return
-// the "not yet implemented" error for the corresponding channel. Tests can
-// override individual entries (or replace the whole map) to inject success
-// or failure responses without a live SMTP / webhook client.
-var channelSenders = map[model.Channel]channelSenderFn{
-	model.ChannelEmail:    defaultEmailSender,
-	model.ChannelDingTalk: defaultDingTalkSender,
-	model.ChannelWeCom:    defaultWeComSender,
-}
-
-// NotifyService handles sending notifications.
+// NotifyService routes notification requests through a Notifier (one
+// method per delivery channel) and records every attempt in the Store
+// log. The Notifier is a required dependency — production wires it
+// with real SMTP / webhook transports; tests inject fakes.
 type NotifyService struct {
-	store Store
-	log   *slog.Logger
+	store    Store
+	log      *slog.Logger
+	notifier *Notifier
 }
 
-func NewNotifyService(s Store) *NotifyService {
-	return &NotifyService{store: s}
+// NewNotifyService wires the store + notifier. A nil notifier is allowed
+// (so service-level tests can exercise the store path without a channel
+// transport); Send returns ErrNotifierNotConfigured in that case.
+func NewNotifyService(s Store, n *Notifier) *NotifyService {
+	return &NotifyService{store: s, notifier: n}
 }
 
-// Send sends a notification to a user via the specified channel.
+// ErrNotifierNotConfigured is returned by Send when the service was
+// constructed without a Notifier. Callers (the HTTP handler) treat it
+// as a 500 since it's a wiring error, not a user error.
+var ErrNotifierNotConfigured = errors.New("notify-svc: notifier not configured")
+
+// Send persists the notification log, dispatches via the Notifier, and
+// updates the log with the outcome. The dispatch is method-dispatched
+// (Email/DingTalk/WeCom) rather than table-driven — easier to follow
+// than a map of closures, and the dispatch logic is trivial enough
+// that a switch is the right amount of indirection.
 func (s *NotifyService) Send(ctx context.Context, req *model.SendRequest) error {
 	tidStr, err := tenant.FromContext(ctx)
 	if err != nil {
 		return err
 	}
-	tid, _ := uuid.Parse(tidStr) // tenant context is UUID string
+	tid, _ := uuid.Parse(tidStr)
 
-	// Log the notification
 	nlog := &model.NotificationLog{
 		TenantID:         tid,
 		UserID:           req.UserID,
@@ -70,17 +72,30 @@ func (s *NotifyService) Send(ctx context.Context, req *model.SendRequest) error 
 		return err
 	}
 
-	// Send via the appropriate channel. The dispatch is table-driven through
-	// channelSenders so tests can replace individual entries.
 	var sendErr error
-	if sender, ok := channelSenders[req.Channel]; ok {
-		sendErr = sender(req)
-	} else {
+	switch req.Channel {
+	case model.ChannelEmail:
+		if s.notifier == nil {
+			sendErr = ErrNotifierNotConfigured
+		} else {
+			sendErr = s.notifier.Email(ctx, req)
+		}
+	case model.ChannelDingTalk:
+		if s.notifier == nil {
+			sendErr = ErrNotifierNotConfigured
+		} else {
+			sendErr = s.notifier.DingTalk(ctx, req)
+		}
+	case model.ChannelWeCom:
+		if s.notifier == nil {
+			sendErr = ErrNotifierNotConfigured
+		} else {
+			sendErr = s.notifier.WeCom(ctx, req)
+		}
+	default:
 		sendErr = fmt.Errorf("unknown channel: %s", req.Channel)
 	}
 
-	// Update log status. sendErr may be nil on success, in which case the
-	// error_message column stays empty.
 	status := "sent"
 	var errMsg string
 	if sendErr != nil {
@@ -91,26 +106,6 @@ func (s *NotifyService) Send(ctx context.Context, req *model.SendRequest) error 
 		s.log.Error("failed to update notification log", slog.String("err", err.Error()))
 	}
 	return sendErr
-}
-
-// defaultEmailSender is the production email dispatcher. It currently
-// returns "not yet implemented" and exists as a package-level function so it
-// can be replaced in tests via channelSenders[model.ChannelEmail] = ...
-func defaultEmailSender(req *model.SendRequest) error {
-	// TODO: implement SMTP email sending
-	return fmt.Errorf("email sending not yet implemented")
-}
-
-// defaultDingTalkSender is the production DingTalk dispatcher.
-func defaultDingTalkSender(req *model.SendRequest) error {
-	// TODO: implement DingTalk webhook
-	return fmt.Errorf("dingtalk sending not yet implemented")
-}
-
-// defaultWeComSender is the production WeCom dispatcher.
-func defaultWeComSender(req *model.SendRequest) error {
-	// TODO: implement WeCom webhook
-	return fmt.Errorf("wecom sending not yet implemented")
 }
 
 // CreatePreference creates a notification preference.
