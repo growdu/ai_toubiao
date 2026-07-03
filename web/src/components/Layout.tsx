@@ -45,7 +45,7 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 bg-gray-50">
+      <main className="flex-1 bg-gray-50 overflow-hidden">
         <Outlet />
       </main>
     </div>

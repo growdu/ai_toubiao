@@ -35,8 +35,14 @@ type chatRequest struct {
 }
 
 type chatResponse struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
+	Content          string  `json:"content"`
+	Model            string  `json:"model"`
+	Provider         string  `json:"provider"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
+	CacheHit         bool    `json:"cache_hit"`
 }
 
 // Chat calls router-svc /api/v1/router/chat.
@@ -53,7 +59,9 @@ func (c *RouterClient) Chat(ctx context.Context, tenantID uuid.UUID, task string
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("router-svc HTTP %d", resp.StatusCode)
 	}
-	var wrapper struct{ Data chatResponse `json:"data"` }
+	var wrapper struct {
+		Data chatResponse `json:"data"`
+	}
 	json.NewDecoder(resp.Body).Decode(&wrapper)
 	return &wrapper.Data, nil
 }
@@ -103,7 +111,9 @@ func (c *KnowledgeClient) Search(ctx context.Context, tenantID uuid.UUID, query 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("knowledge-svc HTTP %d", resp.StatusCode)
 	}
-	var wrapper struct{ Data searchResponse `json:"data"` }
+	var wrapper struct {
+		Data searchResponse `json:"data"`
+	}
 	json.NewDecoder(resp.Body).Decode(&wrapper)
 	return wrapper.Data.Hits, nil
 }
@@ -130,7 +140,9 @@ func (c *DocumentClient) GetParseResult(ctx context.Context, docID uuid.UUID) (m
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("document-svc HTTP %d", resp.StatusCode)
 	}
-	var wrapper struct{ Data map[string]any `json:"data"` }
+	var wrapper struct {
+		Data map[string]any `json:"data"`
+	}
 	json.NewDecoder(resp.Body).Decode(&wrapper)
 	return wrapper.Data, nil
 }

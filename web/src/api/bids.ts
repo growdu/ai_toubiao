@@ -11,11 +11,60 @@ export interface BidJob {
   done_chapters: number
   created_at: string
   updated_at: string
+  version: number
 }
 
 export interface CreateBidRequest {
   project_id: string
   rfp_document_id?: string
+}
+
+export interface ChapterSpec {
+  id: string
+  bid_job_id: string
+  parent_id?: string
+  title: string
+  level: number
+  order_index: number
+  chapter_type: string
+  target_word_count: number
+  min_word_count: number
+  writing_style: string
+  priority: string
+  status: string
+}
+
+export interface ChapterContent {
+  chapter_spec_id: string
+  version: number
+  content_text: string
+  word_count: number
+  min_word_met: boolean
+  generated_by: string
+  llm_model?: string
+  generation_duration_ms?: number
+  status?: string
+}
+
+export interface AddChapterRequest {
+  title: string
+  level?: number
+  order_index?: number
+  parent_id?: string
+  target_word_count?: number
+  min_word_count?: number
+  writing_style?: string
+  priority?: string
+}
+
+export interface UpdateChapterRequest {
+  title?: string
+  level?: number
+  order_index?: number
+  target_word_count?: number
+  min_word_count?: number
+  priority?: string
+  status?: string
 }
 
 export const bidsApi = {
@@ -26,80 +75,49 @@ export const bidsApi = {
 
   create: (data: CreateBidRequest) => api.post<{ data: BidJob }>('/bids', data),
 
-  pause: (id: string) => api.post<{ data: BidJob }>(`/bids/${id}/pause`),
-
-  resume: (id: string) => api.post<{ data: BidJob }>(`/bids/${id}/resume`),
-
+  // Chapter outline CRUD
   getOutline: (id: string) =>
     api.get<{ data: ChapterSpec[] }>(`/bids/${id}/outline`),
 
-  updateOutline: (id: string, data: ChapterSpec[]) =>
-    api.put<{ data: ChapterSpec[] }>(`/bids/${id}/outline`, { chapters: data }),
+  addChapter: (id: string, data: AddChapterRequest) =>
+    api.post<{ data: ChapterSpec }>(`/bids/${id}/outline`, data),
 
-  getAuditReport: (id: string) =>
-    api.get<{ data: AuditReport }>(`/bids/${id}/audit-report`),
+  updateChapter: (bidId: string, chapterId: string, data: UpdateChapterRequest) =>
+    api.put<{ data: any }>(`/bids/${bidId}/chapters/${chapterId}`, data),
 
-  resolveIssues: (id: string, data: { issue_id: string; action: string }[]) =>
-    api.post<{ data: AuditReport }>(`/bids/${id}/resolve-issues`, { issues: data }),
+  deleteChapter: (bidId: string, chapterId: string) =>
+    api.delete<{ data: any }>(`/bids/${bidId}/chapters/${chapterId}`),
 
-  /** Export the bid as a Word (.docx) file. Returns the raw blob and suggested filename. */
+  // Chapter generation
+  generateChapter: (bidId: string, chapterId: string) =>
+    api.post<{ data: { chapter_id: string; status: string; message: string } }>(`/bids/${bidId}/chapters/${chapterId}/generate`),
+
+  // Chapter content
+  getChapterContent: (bidId: string, chapterId: string) =>
+    api.get<{ data: ChapterContent }>(`/bids/${bidId}/chapters/${chapterId}/content`),
+
+  // Workflow control
+  pause: (id: string) => api.post<{ data: BidJob }>(`/bids/${id}/pause`),
+  resume: (id: string) => api.post<{ data: BidJob }>(`/bids/${id}/resume`),
+
+  transition: (id: string, to: string, version?: number, reason?: string) =>
+    api.post<{ data: BidJob }>(`/bids/${id}/transition${version ? `?version=${version}` : ''}`, { to, reason: reason || '' }),
+
+  // Export
   exportWord: async (id: string): Promise<{ blob: Blob; filename: string }> => {
-    const res = await api.get<Blob>(`/bids/${id}/export/word`, {
-      responseType: 'blob',
-    })
+    const res = await api.get<Blob>(`/bids/${id}/export/word`, { responseType: 'blob' })
     return { blob: res.data, filename: filenameFromDisposition(res.headers['content-disposition']) ?? `bid_${id}.docx` }
   },
 
-  /** Export the bid as a PDF file. MVP falls back to .docx until LibreOffice is wired in. */
   exportPdf: async (id: string): Promise<{ blob: Blob; filename: string }> => {
-    const res = await api.get<Blob>(`/bids/${id}/export/pdf`, {
-      responseType: 'blob',
-    })
+    const res = await api.get<Blob>(`/bids/${id}/export/pdf`, { responseType: 'blob' })
     return { blob: res.data, filename: filenameFromDisposition(res.headers['content-disposition']) ?? `bid_${id}.pdf` }
   },
 }
 
-/** Parse `filename=...` (RFC 6266) from a Content-Disposition header value; supports quoted and unquoted forms.
- *  Exported for unit testing. */
 export function filenameFromDisposition(header: string | undefined): string | null {
   if (!header) return null
   const m = header.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
   if (!m) return null
-  try {
-    return decodeURIComponent(m[1])
-  } catch {
-    return m[1]
-  }
-}
-
-export interface ChapterSpec {
-  id: string
-  title: string
-  level: number
-  order_index: number
-  chapter_type: string
-  target_word_count: number
-  min_word_count: number
-  status: string
-  priority: string
-}
-
-export interface AuditReport {
-  bid_job_id: string
-  total_issues: number
-  critical: number
-  major: number
-  minor: number
-  issues: AuditIssue[]
-}
-
-export interface AuditIssue {
-  id: string
-  chapter_id: string
-  chapter_title: string
-  dimension: string
-  severity: string
-  issue: string
-  suggestion: string
-  status: string
+  try { return decodeURIComponent(m[1]) } catch { return m[1] }
 }

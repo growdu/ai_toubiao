@@ -590,3 +590,14 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+// LookupBidJob finds the bid_job_id and rfp_document_id associated with a
+// workflow by querying the bid_jobs table.
+func (s *Store) LookupBidJob(ctx context.Context, workflowID uuid.UUID) (bidJobID, documentID uuid.UUID, err error) {
+	const q = `
+		SELECT id, COALESCE(rfp_document_id, '00000000-0000-0000-0000-000000000000')
+		FROM bid_jobs
+		WHERE workflow_id = $1
+		LIMIT 1`
+	err = s.pool.QueryRow(ctx, q, workflowID).Scan(&bidJobID, &documentID)
+	return bidJobID, documentID, err
+}

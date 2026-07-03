@@ -150,21 +150,13 @@ func (e *ExporterService) assembleDocumentXML(title string, chapters []ChapterDa
 		buf.WriteString(html.EscapeString(ch.Title))
 		buf.WriteString(`</w:t></w:r></w:p>`)
 
-		// Body paragraphs.
+		// Body content — convert Markdown to OOXML (headings, lists, tables,
+		// bold/italic, figure placeholders).
 		content := strings.TrimSpace(ch.Content)
 		if content == "" {
 			content = "(内容待生成)"
 		}
-		paragraphs := strings.Split(content, "\n")
-		for _, para := range paragraphs {
-			para = strings.TrimSpace(para)
-			if para == "" {
-				continue
-			}
-			buf.WriteString(`<w:p><w:r><w:t>`)
-			buf.WriteString(html.EscapeString(para))
-			buf.WriteString(`</w:t></w:r></w:p>`)
-		}
+		buf.WriteString(markdownToOOXML(content))
 	}
 
 	buf.WriteString("</w:body></w:document>")

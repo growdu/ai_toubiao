@@ -30,6 +30,19 @@ services:
       timeout: 5s
       retries: 10
 
+
+  redis:
+    image: redis:7-alpine
+    container_name: bidwriter-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ..
@@ -100,8 +113,15 @@ services:
     environment:
       DB_DSN: postgres://postgres:postgres@postgres:5432/bidwriter?sslmode=disable
       HTTP_ADDR: ":8080"
+      REDIS_ADDR: "redis:6379"
+      ROUTER_URL: http://router-svc:8080
+      KNOWLEDGE_URL: http://knowledge-svc:8080
+      DOCUMENT_URL: http://document-svc:8080
+      AUDIT_URL: http://audit-svc:8080
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 

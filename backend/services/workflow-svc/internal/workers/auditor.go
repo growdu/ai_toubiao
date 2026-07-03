@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -13,18 +14,19 @@ import (
 // AuditPayload is the task payload for compliance audit.
 type AuditPayload struct {
 	WorkflowID uuid.UUID `json:"workflow_id"`
-	BidJobID  uuid.UUID `json:"bid_job_id"`
-	TenantID  uuid.UUID `json:"tenant_id"`
+	BidJobID   uuid.UUID `json:"bid_job_id"`
+	TenantID   uuid.UUID `json:"tenant_id"`
 }
 
 // AuditorWorker processes compliance audit tasks.
 type AuditorWorker struct {
 	log *slog.Logger
+	cfg Config
 }
 
 // NewAuditorWorker creates a new auditor worker.
-func NewAuditorWorker(log *slog.Logger) *AuditorWorker {
-	return &AuditorWorker{log: log}
+func NewAuditorWorker(log *slog.Logger, cfg Config) *AuditorWorker {
+	return &AuditorWorker{log: log, cfg: cfg}
 }
 
 // Process handles the compliance audit task.
@@ -39,7 +41,7 @@ func (w *AuditorWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("bid_job_id", payload.BidJobID.String()))
 
 	// 1. Trigger audit via audit-svc.
-	auditClient := NewAuditClient("http://localhost:8087")
+	auditClient := NewAuditClient(w.cfg.AuditURL)
 	if err := auditClient.TriggerAudit(ctx, payload.BidJobID, payload.TenantID); err != nil {
 		w.log.Warn("auditor: audit trigger failed", slog.Any("error", err))
 		// Don't fail the task — audit may need manual review.
@@ -55,14 +57,17 @@ func (w *AuditorWorker) Process(ctx context.Context, task *asynq.Task) error {
 func EnqueueAudit(ctx context.Context, client *asynq.Client, workflowID, bidJobID, tenantID uuid.UUID) error {
 	payload := AuditPayload{
 		WorkflowID: workflowID,
-		BidJobID:  bidJobID,
-		TenantID:  tenantID,
+		BidJobID:   bidJobID,
+		TenantID:   tenantID,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 	task := asynq.NewTask(TaskAudit, data)
-	_, err = client.EnqueueContext(ctx, task, asynq.MaxRetry(3), asynq.Timeout(60*60*1000))
+	_, err = client.EnqueueContext(ctx, task,
+		asynq.MaxRetry(3),
+		asynq.Timeout(60*time.Minute),
+		asynq.Queue(QueueAuditor))
 	return err
 }

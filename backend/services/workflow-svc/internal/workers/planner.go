@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/bidwriter/services/workflow-svc/internal/model"
 	"github.com/bidwriter/services/workflow-svc/internal/state"
@@ -26,11 +27,12 @@ type PlannerPayload struct {
 type PlannerWorker struct {
 	log  *slog.Logger
 	pool *pgxpool.Pool
+	cfg  Config
 }
 
 // NewPlannerWorker creates a new planner worker.
-func NewPlannerWorker(log *slog.Logger, pool *pgxpool.Pool) *PlannerWorker {
-	return &PlannerWorker{log: log, pool: pool}
+func NewPlannerWorker(log *slog.Logger, pool *pgxpool.Pool, cfg Config) *PlannerWorker {
+	return &PlannerWorker{log: log, pool: pool, cfg: cfg}
 }
 
 // Process handles the outline generation task.
@@ -45,7 +47,7 @@ func (w *PlannerWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("bid_job_id", payload.BidJobID.String()))
 
 	// 1. Load parse_result from document-svc.
-	docClient := NewDocumentClient("http://localhost:8082")
+	docClient := NewDocumentClient(w.cfg.DocumentURL)
 	parseResult, err := docClient.GetParseResult(ctx, payload.DocumentID)
 	if err != nil {
 		w.log.Warn("planner: failed to get parse result, using defaults", slog.Any("error", err))
@@ -53,7 +55,7 @@ func (w *PlannerWorker) Process(ctx context.Context, task *asynq.Task) error {
 	}
 
 	// 2. Retrieve relevant evidence from knowledge base.
-	kbClient := NewKnowledgeClient("http://localhost:8086")
+	kbClient := NewKnowledgeClient(w.cfg.KnowledgeURL)
 	projectName := ""
 	if v, ok := parseResult["project_name"].(string); ok {
 		projectName = v
@@ -70,15 +72,15 @@ func (w *PlannerWorker) Process(ctx context.Context, task *asynq.Task) error {
 	}
 
 	// 3. Call router-svc with TaskOutlineGen to generate chapter outline.
-	routerClient := NewRouterClient("http://localhost:8083")
+	routerClient := NewRouterClient(w.cfg.RouterURL)
 	messages := []chatMessage{
 		{Role: "system", Content: "你是一个专业的标书编写助手。请根据以下招标解析结果和证据，生成章节大纲。以JSON数组格式返回，每项包含：title(章节标题)、level(层级1-3)、sort_order(排序序号)。只返回JSON数组，不要其他文字。"},
 		{Role: "user", Content: fmt.Sprintf("项目名称：%s\n招标解析：%v\n可用证据：\n%s\n请生成章节大纲：", projectName, parseResult, evidenceCtx)},
 	}
 	resp, err := routerClient.Chat(ctx, payload.TenantID, "outline_generate", messages, 2048)
-	if err != nil {
-		w.log.Warn("planner: router call failed", slog.Any("error", err))
-		// Fallback: return a basic outline.
+	if err != nil || resp == nil {
+		w.log.Warn("planner: router call failed, using default outline", slog.Any("error", err))
+		resp = &chatResponse{Content: ""}
 	}
 
 	// Parse LLM response to extract chapter list.
@@ -88,14 +90,111 @@ func (w *PlannerWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("workflow_id", payload.WorkflowID.String()),
 		slog.Int("chapter_count", len(chapters)))
 
-	// 4. Write chapter_specs to database (via direct DB insert).
-	// TODO: Implement actual DB insert via w.pool
-	_ = chapters
+	// 4. Write chapter_specs to database.
+	if err := w.persistChapters(ctx, payload, chapters); err != nil {
+		return fmt.Errorf("persist chapters: %w", err)
+	}
+
+	// 5. Update bid_job progress count + advance workflow to 'facts' (review
+	// state). The user reviews the outline here (HIL pause point) and then
+	// transitions to 'generating' which triggers chapter generation via the
+	// dispatch handler.
+	if err := w.advanceWorkflow(ctx, payload, len(chapters)); err != nil {
+		w.log.Warn("planner: failed to advance workflow state", slog.Any("error", err))
+	}
 
 	w.log.Info("planner: outline generated successfully",
-		slog.String("workflow_id", payload.WorkflowID.String()))
+		slog.String("workflow_id", payload.WorkflowID.String()),
+		slog.Int("chapter_count", len(chapters)))
 
 	return nil
+}
+
+// persistChapters inserts all generated chapter specs into chapter_specs.
+func (w *PlannerWorker) persistChapters(ctx context.Context, payload PlannerPayload, chapters []map[string]any) error {
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Clear any previously generated specs for this bid job (re-runs).
+	if _, err := tx.Exec(ctx, `DELETE FROM chapter_specs WHERE bid_job_id = $1`, payload.BidJobID); err != nil {
+		return fmt.Errorf("clear old specs: %w", err)
+	}
+
+	for _, ch := range chapters {
+		title, _ := ch["title"].(string)
+		if title == "" {
+			continue
+		}
+		level := intFromAny(ch["level"], 1)
+		if level < 1 {
+			level = 1
+		}
+		if level > 3 {
+			level = 3
+		}
+		sortOrder := intFromAny(ch["sort_order"], 0)
+		if sortOrder == 0 {
+			sortOrder = intFromAny(ch["sort_order"], 0)
+		}
+
+		specID := uuid.New()
+		_, err := tx.Exec(ctx, `
+			INSERT INTO chapter_specs
+			    (id, bid_job_id, title, level, order_index,
+			     chapter_type, target_word_count, min_word_count,
+			     writing_style, priority, status, version)
+			VALUES ($1, $2, $3, $4, $5, 'normal', 1500, 800, 'formal', 'normal', 'planned', 1)`,
+			specID, payload.BidJobID, title, level, sortOrder)
+		if err != nil {
+			return fmt.Errorf("insert chapter_spec %q: %w", title, err)
+		}
+	}
+
+	// Update bid_job total_chapters count.
+	if _, err := tx.Exec(ctx, `
+		UPDATE bid_jobs SET total_chapters = $2, updated_at = NOW()
+		WHERE id = $1`, payload.BidJobID, len(chapters)); err != nil {
+		return fmt.Errorf("update bid_job: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// advanceWorkflow transitions the workflow from outlining to facts (the
+// next happy-path state), so the pipeline can proceed to chapter generation.
+func (w *PlannerWorker) advanceWorkflow(ctx context.Context, payload PlannerPayload, chapterCount int) error {
+	if w.pool == nil {
+		return nil
+	}
+	// Transition workflow state: outlining -> facts (next in linear plan).
+	nextState, ok := nextAfterOutlining()
+	if !ok {
+		return nil
+	}
+	_, err := w.pool.Exec(ctx, `
+		UPDATE workflows SET status = $2, current_step = $3, updated_at = NOW()
+		WHERE id = $1 AND status = 'outlining'`,
+		payload.WorkflowID, nextState, "facts")
+	if err != nil {
+		return fmt.Errorf("update workflow state: %w", err)
+	}
+
+	// Record the transition event.
+	_, _ = w.pool.Exec(ctx, `
+		INSERT INTO workflow_events (workflow_id, tenant_id, from_state, to_state, actor_id, reason)
+		VALUES ($1, $2, 'outlining', $3, $4, $5)`,
+		payload.WorkflowID, payload.TenantID, nextState, payload.TenantID,
+		fmt.Sprintf("outline generated: %d chapters", chapterCount))
+	return nil
+}
+
+// nextAfterOutlining returns the state that follows outlining in the
+// linear plan. Kept here to avoid importing state in every worker.
+func nextAfterOutlining() (model.State, bool) {
+	return state.NextState(model.StateOutlining)
 }
 
 // parseChapterOutline extracts chapter specs from LLM JSON response.
@@ -151,62 +250,23 @@ func EnqueueOutline(ctx context.Context, client *asynq.Client, workflowID, bidJo
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 	task := asynq.NewTask(TaskOutlineGenerate, data)
-	_, err = client.EnqueueContext(ctx, task, asynq.MaxRetry(3), asynq.Timeout(10*60*60*1000))
+	_, err = client.EnqueueContext(ctx, task,
+		asynq.MaxRetry(3),
+		asynq.Timeout(30*time.Minute),
+		asynq.Queue(QueuePlanner))
 	return err
 }
 
-// TransitionWorkflow transitions a workflow to the next state.
-func TransitionWorkflow(ctx context.Context, store WorkflowStore, workflowID uuid.UUID, to model.State, reason string) error {
-	wf, err := store.GetWorkflow(ctx, workflowID)
-	if err != nil {
-		return err
+// intFromAny safely extracts an int from an any (JSON number or float).
+func intFromAny(v any, def int) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	default:
+		return def
 	}
-
-	if err := state.Validate(wf.Status, to); err != nil {
-		return fmt.Errorf("invalid transition %s → %s: %w", wf.Status, to, err)
-	}
-
-	stepName, _ := state.StepForState(to)
-	now := wf.UpdatedAt
-	if err := store.UpdateWorkflow(ctx, workflowID, to, &stepName, nil, nil); err != nil {
-		return err
-	}
-
-	// Log event
-	_ = store.CreateEvent(ctx, &model.Event{
-		WorkflowID: workflowID,
-		TenantID:   wf.TenantID,
-		FromState: &wf.Status,
-		ToState:    to,
-		Reason:     &reason,
-	})
-	_ = now // suppress unused
-	return nil
-}
-
-// WorkflowStore interface for workflow operations needed by workers.
-type WorkflowStore interface {
-	GetWorkflow(ctx context.Context, id uuid.UUID) (*model.Workflow, error)
-	UpdateWorkflow(ctx context.Context, id uuid.UUID, status model.State, step *model.StepName, error *string, artifacts []byte) error
-	CreateEvent(ctx context.Context, e *model.Event) error
-}
-
-// UpdateStepProgress updates step progress.
-func UpdateStepProgress(ctx context.Context, store WorkflowStore, workflowID uuid.UUID, stepName model.StepName, progress int) error {
-	// In production, update the step record in the database
-	_ = store
-	_ = workflowID
-	_ = stepName
-	_ = progress
-	return nil
-}
-
-// FinalizeStep marks a step as completed.
-func FinalizeStep(ctx context.Context, store WorkflowStore, workflowID uuid.UUID, stepName model.StepName, status model.StepStatus, artifacts []byte) error {
-	_ = store
-	_ = workflowID
-	_ = stepName
-	_ = status
-	_ = artifacts
-	return nil
 }

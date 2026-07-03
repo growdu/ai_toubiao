@@ -6,6 +6,7 @@
 //   - Per-step progress tracking (parsing → outlining → facts → generating → auditing → exporting)
 //   - Append-only event log of all transitions
 //   - Tenant-scoped access (ADR-0001)
+//   - Asynq worker pool for async pipeline execution
 //
 // Endpoints:
 //   POST   /api/v1/workflows                         — create new workflow for a project
@@ -31,6 +32,7 @@ import (
 	"github.com/bidwriter/services/workflow-svc/internal/config"
 	"github.com/bidwriter/services/workflow-svc/internal/middleware"
 	"github.com/bidwriter/services/workflow-svc/internal/store"
+	"github.com/bidwriter/services/workflow-svc/internal/workers"
 	"github.com/bidwriter/shared/pkg/db"
 	sharedlogger "github.com/bidwriter/shared/pkg/logger"
 )
@@ -60,9 +62,20 @@ func run() error {
 	}
 	defer pool.Close()
 
-	// Try to wire LibreOffice for PDF export. If soffice isn't on PATH
-	// the converter reports Available()==false and the PDF endpoints
-	// gracefully fall back to returning a DOCX with a warning header.
+	// Build the workers config from service config.
+	wcfg := workers.Config{
+		RedisAddr:    cfg.RedisAddr,
+		RouterURL:    cfg.RouterURL,
+		KnowledgeURL: cfg.KnowledgeURL,
+		DocumentURL:  cfg.DocumentURL,
+		AuditURL:     cfg.AuditURL,
+	}
+
+	// Create the Asynq client for enqueuing tasks from HTTP handlers.
+	asynqClient := workers.NewClient(wcfg)
+	defer asynqClient.Close()
+
+	// Try to wire LibreOffice for PDF export.
 	pdf := api.NewLibreOfficeConverter(cfg.LibreOfficeBin)
 	if !pdf.Available() {
 		log.Warn("libreoffice not found; /export/pdf will fall back to docx")
@@ -73,6 +86,8 @@ func run() error {
 		Log:          log,
 		DocBuilder:   nil, // use default ooxmlBuilder
 		PDFConverter: pdf,
+		Enqueuer:     api.NewAsynqEnqueuer(asynqClient, pool, log),
+		ChapterPool:  pool,
 	}
 	router := h.Routes()
 	handler := middleware.RequestID(middleware.Recover(log)(middleware.Logger(log)(router)))
@@ -84,6 +99,15 @@ func run() error {
 		WriteTimeout: 60 * time.Second,
 	}
 
+	// Start the Asynq worker server in a goroutine.
+	workerErr := make(chan error, 1)
+	go func() {
+		if err := workers.Serve(ctx, log, pool, wcfg); err != nil {
+			workerErr <- fmt.Errorf("workers: %w", err)
+		}
+	}()
+
+	// Start the HTTP server in a goroutine.
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Info("listening", slog.String("addr", cfg.HTTPAddr))
@@ -92,14 +116,23 @@ func run() error {
 		}
 	}()
 
+	// Wait for shutdown signal or a fatal error from either server.
 	select {
 	case err := <-serverErr:
-		return fmt.Errorf("server: %w", err)
+		return fmt.Errorf("http server: %w", err)
+	case err := <-workerErr:
+		return fmt.Errorf("worker server: %w", err)
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
 	}
 
+	// Graceful shutdown: stop accepting new HTTP requests, then wait for
+	// in-flight requests to finish. The Asynq server shuts down via the
+	// ctx cancellation in workers.Serve.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
-	return srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("http shutdown error", slog.Any("error", err))
+	}
+	return nil
 }

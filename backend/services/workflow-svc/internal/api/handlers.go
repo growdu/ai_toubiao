@@ -16,6 +16,7 @@ import (
 	"github.com/bidwriter/shared/pkg/logger"
 	"github.com/bidwriter/shared/pkg/validator"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/google/uuid"
 )
 
@@ -38,6 +39,8 @@ type Handlers struct {
 	Log          *slog.Logger
 	DocBuilder   DocBuilder   // optional; defaults to ooxmlBuilder{}
 	PDFConverter PDFConverter // optional; nil means PDF endpoints fall back to DOCX
+	Enqueuer     Enqueuer     // optional; nil means transitions don't enqueue tasks
+	ChapterPool  *pgxpool.Pool // optional; enables chapter CRUD endpoints
 }
 
 func (h *Handlers) Routes() http.Handler {
@@ -64,6 +67,11 @@ func (h *Handlers) Routes() http.Handler {
 			r.Get("/export/word", h.exportWordHandler)
 			r.Get("/export/pdf", h.exportPDFHandler)
 			r.Post("/export", h.exportDocumentHandler)
+		// Chapter CRUD endpoints
+		if h.ChapterPool != nil {
+			ch := &ChapterHandlers{Pool: h.ChapterPool, Log: h.Log}
+			ch.ChapterRoutes(r)
+		}
 		})
 	})
 	return r
@@ -98,6 +106,24 @@ func (h *Handlers) create(w http.ResponseWriter, r *http.Request) {
 		httperr.InternalError(w, rid)
 		return
 	}
+
+	// Auto-create a bid_job linking the project and workflow so chapter
+	// endpoints work immediately without a separate API call.
+	if h.ChapterPool != nil {
+		var projectName string
+		h.ChapterPool.QueryRow(r.Context(),
+			`SELECT name FROM projects WHERE id = $1`, req.ProjectID).Scan(&projectName)
+		_, err := h.ChapterPool.Exec(r.Context(), `
+			INSERT INTO bid_jobs (tenant_id, project_id, workflow_id, status, project_name)
+			VALUES ($1, $2, $3, 'pending', $4)`,
+			wf.TenantID, req.ProjectID, wf.ID, projectName)
+		if err != nil {
+			h.Log.Warn("auto-create bid_job failed",
+				slog.String("err", err.Error()),
+				slog.String("workflow_id", wf.ID.String()))
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{"data": wf})
 }
 
@@ -194,6 +220,8 @@ func (h *Handlers) transition(w http.ResponseWriter, r *http.Request) {
 		httperr.InternalError(w, rid)
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"data": wf})
+		// Best-effort: enqueue async pipeline tasks for the new state.
+		h.dispatchOnTransition(r.Context(), wf, h.Log)
 	}
 }
 

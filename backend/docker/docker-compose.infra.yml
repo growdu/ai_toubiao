@@ -51,6 +51,20 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: bidwriter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - bidwriter_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   bidwriter_pg:
   bidwriter_minio:
+  bidwriter_redis:

@@ -2,8 +2,6 @@
 package service
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,9 +19,9 @@ import (
 
 // ParserService handles RFP document parsing.
 type ParserService struct {
-	store       *store.Store
-	storage     storage.Storage
-	log         *slog.Logger
+	store        *store.Store
+	storage      storage.Storage
+	log          *slog.Logger
 	routerClient *RouterClient
 }
 
@@ -261,10 +259,10 @@ func detectDarkBidRules(text string) []string {
 }
 
 // extractTextFromPDF extracts text from PDF bytes.
-// Uses basic content stream parsing for text extraction.
-// For complex/scanned PDFs, OCR would be needed (out of scope for MVP).
+// Tries pdftotext (poppler-utils) first for accurate extraction, then
+// falls back to the built-in regex extractor.
 func (p *ParserService) extractTextFromPDF(content []byte) string {
-	text := extractPDFText(content)
+	text := extractPDFTextRobust(context.Background(), content)
 	if text == "" {
 		return string(content)
 	}
@@ -300,58 +298,10 @@ func extractPDFText(data []byte) string {
 	return strings.TrimSpace(buf.String())
 }
 
-// extractTextFromWord extracts text from .docx bytes.
-// .docx is a ZIP archive containing XML; we extract text from word/document.xml.
+// extractTextFromWord extracts text from .docx bytes using paragraph-aware
+// OOXML parsing for better structure preservation.
 func (p *ParserService) extractTextFromWord(content []byte) string {
-	return extractTextFromRawDOCX(content)
-}
-
-// extractTextFromRawDOCX does best-effort text extraction from DOCX XML.
-func extractTextFromRawDOCX(content []byte) string {
-	zipReader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
-	if err != nil {
-		return string(content)
-	}
-	var buf strings.Builder
-	for _, f := range zipReader.File {
-		if f.Name == "word/document.xml" {
-			rc, err := f.Open()
-			if err != nil {
-				continue
-			}
-			data, _ := io.ReadAll(rc)
-			rc.Close()
-			text := stripXMLTags(string(data))
-			buf.WriteString(text)
-			break
-		}
-	}
-	if buf.Len() == 0 {
-		return string(content)
-	}
-	return buf.String()
-}
-
-// stripXMLTags removes XML/HTML tags from a string, leaving only text content.
-func stripXMLTags(s string) string {
-	var buf strings.Builder
-	inTag := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '<' {
-			inTag = true
-			continue
-		}
-		if c == '>' {
-			inTag = false
-			buf.WriteByte(' ')
-			continue
-		}
-		if !inTag {
-			buf.WriteByte(c)
-		}
-	}
-	return strings.TrimSpace(strings.Join(strings.Fields(buf.String()), " "))
+	return extractDOCXText(content)
 }
 
 // GetParseResult retrieves the stored parse result for a document.
