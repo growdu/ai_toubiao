@@ -88,6 +88,14 @@ export const bidsApi = {
   deleteChapter: (bidId: string, chapterId: string) =>
     api.delete<{ data: any }>(`/bids/${bidId}/chapters/${chapterId}`),
 
+  // Save chapter content (user edit)
+  saveChapterContent: (bidId: string, chapterId: string, contentText: string) =>
+    api.put<{ data: ChapterContent }>(`/bids/${bidId}/chapters/${chapterId}/content`, { content_text: contentText }),
+
+  // Save RFP material text
+  saveMaterial: (bidId: string, materialText: string) =>
+    api.put<{ data: { status: string } }>(`/bids/${bidId}/material`, { material_text: materialText }),
+
   // Chapter generation
   generateChapter: (bidId: string, chapterId: string) =>
     api.post<{ data: { chapter_id: string; status: string; message: string } }>(`/bids/${bidId}/chapters/${chapterId}/generate`),

@@ -69,7 +69,7 @@ func (h *Handlers) Routes() http.Handler {
 			r.Post("/export", h.exportDocumentHandler)
 		// Chapter CRUD endpoints
 		if h.ChapterPool != nil {
-			ch := &ChapterHandlers{Pool: h.ChapterPool, Log: h.Log}
+			ch := &ChapterHandlers{Pool: h.ChapterPool, Log: h.Log, Enqueuer: h.Enqueuer}
 			ch.ChapterRoutes(r)
 		}
 		})

@@ -17,6 +17,8 @@ type Enqueuer interface {
 	// EnqueueChaptersForBid loads all chapter specs for a bid job and
 	// dispatches a content-generation task for each.
 	EnqueueChaptersForBid(ctx context.Context, workflowID, bidJobID, tenantID uuid.UUID) error
+	// EnqueueChapter dispatches a content-generation task for a single chapter.
+	EnqueueChapter(ctx context.Context, workflowID, bidJobID, tenantID, chapterID uuid.UUID, chapterTitle string) error
 	// EnqueueAudit dispatches the compliance-audit task.
 	EnqueueAudit(ctx context.Context, workflowID, bidJobID, tenantID uuid.UUID) error
 	// EnqueueExport dispatches the document-export task.
@@ -31,6 +33,9 @@ func (noopEnqueuer) EnqueueOutline(context.Context, uuid.UUID, uuid.UUID, uuid.U
 	return nil
 }
 func (noopEnqueuer) EnqueueChaptersForBid(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return nil
+}
+func (noopEnqueuer) EnqueueChapter(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) error {
 	return nil
 }
 func (noopEnqueuer) EnqueueAudit(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {

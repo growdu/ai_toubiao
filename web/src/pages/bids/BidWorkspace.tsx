@@ -66,6 +66,10 @@ export default function BidWorkspace() {
     mutationFn: ({ to, version }: { to: string; version: number }) => bidsApi.transition(id!, to, version, `transition to ${to}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bid', id] }),
   })
+  const saveMaterialMutation = useMutation({
+    mutationFn: (text: string) => bidsApi.saveMaterial(id!, text),
+    onSuccess: () => setShowMaterial(false),
+  })
   const generateMutation = useMutation({
     mutationFn: (chapterId: string) => bidsApi.generateChapter(id!, chapterId),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['outline', id] }); queryClient.invalidateQueries({ queryKey: ['chapter-content', id, selectedChapterId] }) },
@@ -142,7 +146,7 @@ export default function BidWorkspace() {
                 />
                 <div className="flex gap-2">
                   <button className="flex-1 px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300">上传文件</button>
-                  <button className="flex-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700" disabled={!materialText.trim()}>保存材料</button>
+                  <button onClick={() => saveMaterialMutation.mutate(materialText)} disabled={!materialText.trim() || saveMaterialMutation.isPending} className="flex-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{saveMaterialMutation.isPending ? "保存中..." : "保存材料"}</button>
                 </div>
               </div>
             )}
@@ -174,7 +178,7 @@ export default function BidWorkspace() {
 
         {/* Middle: Content editor */}
         <div className="flex-1 flex flex-col overflow-hidden bg-white">
-          {selectedChapter ? <ChapterEditor chapter={selectedChapter} content={content} onUpdate={(data) => updateMutation.mutate({ chapterId: selectedChapter.id, data })} /> :
+          {selectedChapter ? <ChapterEditor chapter={selectedChapter} content={content} onUpdate={(data) => updateMutation.mutate({ chapterId: selectedChapter.id, data })} bidId={id!} /> :
             <div className="flex-1 flex items-center justify-center text-gray-400"><div className="text-center"><p className="text-lg mb-2">未选择章节</p><p className="text-sm">从左侧目录中选择一个章节</p></div></div>}
         </div>
 
@@ -214,7 +218,7 @@ function ChapterTreeNode({ node, selectedId, onSelect, onDelete, depth = 0 }: { 
 }
 
 // ============ Chapter Editor (Middle) ============
-function ChapterEditor({ chapter, content, onUpdate }: { chapter: ChapterSpec; content: ChapterContent | null; onUpdate: (data: any) => void }) {
+function ChapterEditor({ chapter, content, onUpdate, bidId }: { chapter: ChapterSpec; content: ChapterContent | null; onUpdate: (data: any) => void; bidId: string }) {
   const [editing, setEditing] = useState(false); const [editTitle, setEditTitle] = useState(chapter.title)
   const [editingContent, setEditingContent] = useState(false); const [editContent, setEditContent] = useState('')
 
@@ -253,7 +257,7 @@ function ChapterEditor({ chapter, content, onUpdate }: { chapter: ChapterSpec; c
             <textarea value={editContent} onChange={e => setEditContent(e.target.value)} className="flex-1 w-full p-4 border rounded text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono" />
             <div className="flex gap-2 mt-2 justify-end">
               <button onClick={() => setEditingContent(false)} className="px-3 py-1 text-sm border rounded">取消</button>
-              <button onClick={() => { /* TODO: save content */ setEditingContent(false) }} className="px-3 py-1 text-sm bg-blue-600 text-white rounded">保存内容</button>
+              <button onClick={async () => { await bidsApi.saveChapterContent(bidId, chapter.id, editContent); setEditingContent(false) }} className="px-3 py-1 text-sm bg-blue-600 text-white rounded">保存内容</button>
             </div>
           </div>
         ) : (
