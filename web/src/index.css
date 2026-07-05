@@ -1,3 +1,205 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* -----------------------------------------------------------------------------
+ * 基础排版
+ * ---------------------------------------------------------------------------*/
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-ink-50 text-ink-800 antialiased font-sans;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  .dark body {
+    @apply bg-ink-900 text-ink-100;
+  }
+  ::selection {
+    @apply bg-brand-200 text-brand-900;
+  }
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-400 ring-offset-2 ring-offset-white rounded-md;
+  }
+  .dark *:focus-visible {
+    @apply ring-offset-ink-900;
+  }
+  input, textarea, select, button {
+    font: inherit;
+  }
+  input::placeholder, textarea::placeholder {
+    @apply text-ink-400;
+  }
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    @apply text-ink-500;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * 滚动条 (Webkit)
+ * ---------------------------------------------------------------------------*/
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-ink-200 rounded-full;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-300;
+  }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-ink-700;
+  }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-600;
+  }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .scrollbar-none { scrollbar-width: none; }
+
+  /* 文字截断 */
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* 玻璃态 */
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+  }
+  .dark .glass {
+    background: rgba(16, 20, 42, 0.72);
+  }
+
+  /* 骨架闪烁 */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(221, 226, 236, 0.6) 0%,
+      rgba(238, 240, 245, 0.9) 50%,
+      rgba(221, 226, 236, 0.6) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+  .dark .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(44, 52, 71, 0.6) 0%,
+      rgba(28, 34, 51, 0.9) 50%,
+      rgba(44, 52, 71, 0.6) 100%
+    );
+    background-size: 200% 100%;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * 组件级样式
+ * ---------------------------------------------------------------------------*/
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
+           transition-all duration-150 select-none whitespace-nowrap
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700 hover:shadow
+           focus-visible:ring-brand-400 active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply btn bg-white text-ink-700 border border-ink-200 hover:bg-ink-50 hover:border-ink-300
+           focus-visible:ring-brand-300 active:scale-[0.98];
+  }
+  .dark .btn-secondary {
+    @apply bg-ink-800 text-ink-100 border-ink-700 hover:bg-ink-700 hover:border-ink-600;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-ink-600 hover:bg-ink-100
+           focus-visible:ring-brand-300;
+  }
+  .dark .btn-ghost {
+    @apply text-ink-300 hover:bg-ink-800;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700
+           focus-visible:ring-red-400 active:scale-[0.98];
+  }
+  .btn-sm { @apply px-2.5 py-1 text-xs; }
+  .btn-lg { @apply px-5 py-2.5 text-base; }
+
+  .input {
+    @apply w-full px-3 py-2 bg-white border border-ink-200 rounded-lg text-sm text-ink-800
+           shadow-inset-soft transition
+           focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100
+           disabled:bg-ink-50 disabled:text-ink-400 disabled:cursor-not-allowed;
+  }
+  .dark .input {
+    @apply bg-ink-800 border-ink-700 text-ink-100
+           focus:border-brand-400 focus:ring-brand-900
+           disabled:bg-ink-900 disabled:text-ink-500;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl shadow-soft border border-ink-100/60;
+  }
+  .dark .card {
+    @apply bg-ink-800 border-ink-700/60;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-blue   { @apply badge bg-brand-50 text-brand-700; }
+  .dark .badge-blue   { @apply bg-brand-900 text-brand-200; }
+  .badge-green  { @apply badge bg-emerald-50 text-emerald-700; }
+  .dark .badge-green  { @apply bg-emerald-900 text-emerald-200; }
+  .badge-amber  { @apply badge bg-amber-50 text-amber-700; }
+  .dark .badge-amber  { @apply bg-amber-900 text-amber-200; }
+  .badge-red    { @apply badge bg-red-50 text-red-700; }
+  .dark .badge-red    { @apply bg-red-900 text-red-200; }
+  .badge-purple { @apply badge bg-violet-50 text-violet-700; }
+  .dark .badge-purple { @apply bg-violet-900 text-violet-200; }
+  .badge-gray   { @apply badge bg-ink-100 text-ink-600; }
+  .dark .badge-gray   { @apply bg-ink-700 text-ink-300; }
+
+  /* 章节状态色板 */
+  .status-planned    { @apply badge bg-ink-100 text-ink-600; }
+  .dark .status-planned    { @apply bg-ink-700 text-ink-300; }
+  .status-pending    { @apply badge bg-amber-50 text-amber-700; }
+  .dark .status-pending    { @apply bg-amber-900 text-amber-200; }
+  .status-running    { @apply badge bg-brand-50 text-brand-700; }
+  .dark .status-running    { @apply bg-brand-900 text-brand-200; }
+  .status-succeeded  { @apply badge bg-emerald-50 text-emerald-700; }
+  .dark .status-succeeded  { @apply bg-emerald-900 text-emerald-200; }
+  .status-failed     { @apply badge bg-red-50 text-red-700; }
+  .dark .status-failed     { @apply bg-red-900 text-red-200; }
+  .status-skipped    { @apply badge bg-ink-100 text-ink-400; }
+  .dark .status-skipped    { @apply bg-ink-800 text-ink-500; }
+  .status-paused     { @apply badge bg-amber-50 text-amber-700; }
+  .dark .status-paused     { @apply bg-amber-900 text-amber-200; }
+  .status-done       { @apply badge bg-emerald-50 text-emerald-700; }
+  .dark .status-done       { @apply bg-emerald-900 text-emerald-200; }
+  .status-facts      { @apply badge bg-violet-50 text-violet-700; }
+  .dark .status-facts      { @apply bg-violet-900 text-violet-200; }
+  .status-auditing   { @apply badge bg-violet-50 text-violet-700; }
+  .dark .status-auditing   { @apply bg-violet-900 text-violet-200; }
+  .status-exporting  { @apply badge bg-brand-50 text-brand-700; }
+  .dark .status-exporting  { @apply bg-brand-900 text-brand-200; }
+  .status-generating { @apply badge bg-brand-50 text-brand-700; }
+  .dark .status-generating { @apply bg-brand-900 text-brand-200; }
+  .status-parsing    { @apply badge bg-brand-50 text-brand-700; }
+  .dark .status-parsing    { @apply bg-brand-900 text-brand-200; }
+  .status-outlining  { @apply badge bg-brand-50 text-brand-700; }
+  .dark .status-outlining  { @apply bg-brand-900 text-brand-200; }
+
+  /* 进度条 */
+  .progress-track { @apply w-full bg-ink-100 rounded-full overflow-hidden; }
+  .dark .progress-track { @apply bg-ink-700; }
+  .progress-bar   { @apply h-full bg-gradient-to-r from-brand-500 to-brand-600 rounded-full transition-all duration-500; }
+}

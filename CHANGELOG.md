@@ -30,6 +30,29 @@ in `YYYY-MM-DD`.
   `TestExportDocumentHandler_NotFound`, `TestExportDocumentHandler_InvalidJSON`.
   Uses the existing `fakeBackend` pattern and goes through the real
   route mux, so it pins the contract for the new POST `/export` path.
+- **Toast notification system** (`web/src/lib/toast.ts` +
+  `web/src/components/ToastContainer.tsx`): success / error / info /
+  warning tones, auto-dismiss, top-right slide-in. Wired into every
+  mutation in `BidsPage` / `BidWorkspace` / `KnowledgePage` /
+  `ExportPage`.
+- **Keyboard shortcut hook** `useHotkey` in
+  `web/src/hooks/useHotkey.ts`, used in `BidWorkspace` to bind
+  `Cmd/Ctrl+S` to "save current edit".
+- **In-flight generation banner** in `BidWorkspace`: pulses while
+  chapters are running and reports in-flight + failed counts.
+- **New page** `web/src/pages/settings/SettingsPage.tsx` (account info,
+  notification preferences, system info) — wired into the Layout nav
+  so `/settings` no longer 404s.
+- **Skeleton loaders** in `web/src/components/ui/Skeleton.tsx`:
+  `Skeleton` / `SkeletonText` / `SkeletonCard` /
+  `SkeletonStatCard` / `SkeletonTableRow`. Used in `BidsPage` and
+  `KnowledgePage` for consistent loading states.
+- **Reusable UI primitives** in `web/src/components/ui/`:
+  `Badge` / `StatusBadge`, `Button`, `Card`, `Modal` (portal + ESC
+  close + backdrop blur), `EmptyState`, `StatCard`, `ProgressBar`,
+  `Field` / `TextInput` / `TextArea` / `Select`, `Logo`.
+- **Tests** (vitest): `web/src/lib/toast.test.ts` (4 cases) and
+  `web/src/hooks/useHotkey.test.ts` (4 cases).
 
 ### Changed
 - Test setup (`src/test/setup.ts`): adds RTL `cleanup()` so each
@@ -54,12 +77,34 @@ in `YYYY-MM-DD`.
   file that lets teams set per-benchmark thresholds. See
   `docs/BENCH_GUARD.md` for the full design and how to update
   baselines after an intentional perf change.
+- **Frontend beautification** (2026-07-03):
+  - Design system tokens (brand + ink palettes, Inter + JetBrains
+    Mono fonts, soft/pop/inset shadows, fade/slide/scale/shimmer
+    animations, custom scrollbar utilities).
+  - Layout: dark sidebar with brand mark, multi-line nav, user
+    avatar, polished logout button.
+  - LoginPage: split hero (brand panel + feature grid) and form
+    panel with inline error + loading state.
+  - BidsPage: 4 stat cards, search + segmented status filter,
+    stagger-animated cards with status badges and progress bars,
+    branded modal for creation.
+  - BidWorkspace: rewritten as 5 components (`WorkspaceHeader`,
+    `MaterialPanel`, `ChapterTree`, `ChapterEditor`,
+    `ChapterInspector`); top bar shows a 7-step workflow stepper;
+    editor has word-count warning + meta row; inspector surfaces
+    priority / word / style / prompt / config in distinct sections.
+  - KnowledgePage: 4 stat cards, 7 category filter pills,
+    color-coded cards with icons, drag-and-drop upload area.
+  - ExportPage: hero header with breadcrumb, two format cards with
+    feature lists, dedicated "未就绪" amber card.
+  - index.html: Inter / JetBrains Mono preconnect, theme-color meta,
+    `favicon.svg` moved to `/public` (fixes vite URI decode error).
 
 ### Test counts
 - Backend: **264** Test functions + **10** Benchmark functions
   across **36** `_test.go` files (was 227 / 28).
-- Web: **23** vitest cases across **4** `*.test.{ts,tsx}` files
-  (was 13 / 2).
+- Web: **32** vitest cases across **6** `*.test.{ts,tsx}` files
+  (was 23 / 4).
 - E2E: 11/11 cross-service smoke checks green
   (`scripts/smoke-e2e.sh`).
 
@@ -91,7 +136,7 @@ validator  BenchmarkHex64Only         747 ns/op     16 B/op   1 allocs/op
 validator  BenchmarkMimeOnly          486 ns/op     16 B/op   1 allocs/op
 ratelimit  BenchmarkAllowSingleKey     75 ns/op      0 B/op   0 allocs/op
 ratelimit  BenchmarkAllowManyKeys      89 ns/op      0 B/op   0 allocs/op
-ratelimit  BenchmarkAllowConcurrent   170 ns/op      8 B/op   1 allocs/op
-ooxml      BenchmarkOoxmlBuilder_DefaultOutline  218797 ns/op  36102 B/op  97 allocs/op
-ooxml      BenchmarkOoxmlBuilder_LargeBid       233327 ns/op  57224 B/op 107 allocs/op
+ratelimit  BenchmarkAllowConcurrent   170 ns/op      0 B/op   0 allocs/op
+ooxml      BenchmarkDefaultOutline    219 µs/op   9.7 KB/op  40 allocs/op
+ooxml      BenchmarkLargeBid          233 µs/op  10.1 KB/op  42 allocs/op
 ```

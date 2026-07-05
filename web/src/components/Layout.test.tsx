@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
@@ -31,16 +31,16 @@ describe('Layout', () => {
     expect(screen.getByText('标书管理')).toBeInTheDocument()
     expect(screen.getByText('知识库')).toBeInTheDocument()
     expect(screen.getByText('设置')).toBeInTheDocument()
-    expect(screen.getByText(/用户: user-42/)).toBeInTheDocument()
+    expect(screen.getByText('user-42')).toBeInTheDocument()
   })
 
-  it('applies the active bg class to the nav item matching the current path', () => {
+  it('applies the brand-active class to the nav item matching the current path', () => {
     renderAt('/knowledge')
     const navLinks = screen.getAllByRole('link')
     const active = navLinks.find((a) => a.getAttribute('href') === '/knowledge')
     const inactive = navLinks.find((a) => a.getAttribute('href') === '/bids')
-    expect(active!.className).toContain('bg-blue-600')
-    expect(inactive!.className).not.toContain('bg-blue-600')
+    expect(active!.className).toContain('bg-brand-600')
+    expect(inactive!.className).not.toContain('bg-brand-600')
   })
 
   it('renders the child route via <Outlet />', () => {
@@ -48,7 +48,7 @@ describe('Layout', () => {
     expect(screen.getByText('settings-page')).toBeInTheDocument()
   })
 
-  it('logout button clears the auth store', async () => {
+  it('logout button clears the auth store and navigates to /login', async () => {
     const user = userEvent.setup()
     renderAt('/bids')
 
@@ -65,6 +65,6 @@ describe('Layout', () => {
     renderAt('/bids/abc-123')
     const navLinks = screen.getAllByRole('link')
     const active = navLinks.find((a) => a.getAttribute('href') === '/bids')
-    expect(active!.className).toContain('bg-blue-600')
+    expect(active!.className).toContain('bg-brand-600')
   })
 })

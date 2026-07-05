@@ -3,6 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AI 驱动的智能标书编制系统 —— 自动生成大纲、检索证据链、章节内容、图表与审计" />
+    <meta name="theme-color" content="#224be0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <!-- Apply persisted theme before paint to avoid FOUC. Reads from
+         localStorage('theme-storage') — keep this in sync with the
+         zustand `persist` config in src/lib/theme.ts. -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('theme-storage');
+          var mode = raw ? (JSON.parse(raw).state && JSON.parse(raw).state.mode) : 'light';
+          var resolved = mode === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : mode;
+          if (resolved === 'dark') document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = resolved;
+        } catch (_) { /* noop */ }
+      })();
+    </script>
     <title>AI 标书生成系统</title>
   </head>
   <body>

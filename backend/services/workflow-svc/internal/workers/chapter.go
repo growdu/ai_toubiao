@@ -31,11 +31,23 @@ type ChapterWorker struct {
 	log  *slog.Logger
 	pool *pgxpool.Pool
 	cfg  Config
+
+	// Progress is an optional auto-advance hook. When set, the worker checks
+	// chapter-completion progress after writing each chapter's content and,
+	// if every chapter is in a terminal state, transitions the workflow from
+	// generating -> auditing without a manual API call.
+	Progress *Watcher
 }
 
 // NewChapterWorker creates a new chapter worker.
 func NewChapterWorker(log *slog.Logger, pool *pgxpool.Pool, cfg Config) *ChapterWorker {
 	return &ChapterWorker{log: log, pool: pool, cfg: cfg}
+}
+
+// WithProgress attaches a Progress watcher (useful in cmd wiring).
+func (w *ChapterWorker) WithProgress(w2 *Watcher) *ChapterWorker {
+	w.Progress = w2
+	return w
 }
 
 // Process handles the chapter content generation task.
@@ -105,6 +117,17 @@ func (w *ChapterWorker) Process(ctx context.Context, task *asynq.Task) error {
 	// 5. Update bid_job progress.
 	if err := w.updateBidProgress(ctx, payload.BidJobID); err != nil {
 		w.log.Warn("chapter: failed to update bid progress", slog.Any("error", err))
+	}
+
+	// 6. Auto-advance the workflow from generating -> auditing when every
+	// chapter spec is in a terminal state. Best effort; failures are
+	// logged and ignored (the operator can manually retry the transition).
+	if w.Progress != nil {
+		if err := w.Progress.CheckAndAdvance(ctx, payload.BidJobID); err != nil {
+			w.log.Warn("chapter: progress check-and-advance failed",
+				slog.String("bid_job_id", payload.BidJobID.String()),
+				slog.Any("err", err))
+		}
 	}
 
 	w.log.Info("chapter: content generated",

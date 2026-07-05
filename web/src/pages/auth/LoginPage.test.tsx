@@ -17,6 +17,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 vi.mock('../../api/auth', () => ({
   authApi: {
     login: vi.fn(),
+    extractAuthInfo: vi.fn(),
   },
 }))
 
@@ -24,6 +25,7 @@ import { authApi } from '../../api/auth'
 
 // Import after vi.mock so we get the mocked version.
 const mockedLogin = vi.mocked(authApi.login)
+const mockedExtract = vi.mocked(authApi.extractAuthInfo)
 
 function renderLogin() {
   return render(
@@ -38,35 +40,44 @@ describe('LoginPage', () => {
     useAuthStore.setState({ token: null, userId: null, tenantId: null })
     navigateMock.mockClear()
     mockedLogin.mockReset()
+    mockedExtract.mockReset()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('renders email + password inputs and a submit button', () => {
+  it('renders tenant + email + password inputs and a submit button', () => {
     renderLogin()
+    expect(screen.getByPlaceholderText('demo-a')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('admin@example.com')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('••••••••')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument()
   })
 
   it('submits credentials, calls setAuth, and navigates to /bids on success', async () => {
-    mockedLogin.mockResolvedValueOnce({
-      data: { token: 'tok', user_id: 'u-1', tenant_id: 't-1' },
-    } as any)
+    mockedLogin.mockResolvedValueOnce({ data: {} } as any)
+    mockedExtract.mockReturnValueOnce({ token: 'tok', userId: 'u-1', tenantId: 't-1' })
 
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText('admin@example.com'), 'admin@example.com')
+    // Default form values match demo-a / admin@demo-a.test / admin123, so we
+    // just submit. Override password to verify it's sent.
+    await user.clear(screen.getByPlaceholderText('••••••••'))
     await user.type(screen.getByPlaceholderText('••••••••'), 'hunter2')
+
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     await waitFor(() => {
       expect(navigateMock).toHaveBeenCalledWith('/bids')
     })
-    expect(mockedLogin).toHaveBeenCalledWith({ email: 'admin@example.com', password: 'hunter2' })
+    expect(mockedLogin).toHaveBeenCalledWith({
+      tenant_slug: 'demo-a',
+      email: 'admin@demo-a.test',
+      password: 'hunter2',
+    })
+    expect(mockedExtract).toHaveBeenCalled()
     expect(useAuthStore.getState().token).toBe('tok')
     expect(useAuthStore.getState().userId).toBe('u-1')
     expect(useAuthStore.getState().tenantId).toBe('t-1')
@@ -80,8 +91,6 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText('admin@example.com'), 'bad@x.com')
-    await user.type(screen.getByPlaceholderText('••••••••'), 'wrong')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByText('账号或密码错误')).toBeInTheDocument()
@@ -95,8 +104,6 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText('admin@example.com'), 'a@b.com')
-    await user.type(screen.getByPlaceholderText('••••••••'), 'p')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByText('登录失败')).toBeInTheDocument()
@@ -109,11 +116,22 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText('admin@example.com'), 'a@b.com')
-    await user.type(screen.getByPlaceholderText('••••••••'), 'p')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByText('登录中...')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登录中...' })).toBeDisabled()
+  })
+
+  it('shows the inline error when login returns no token', async () => {
+    mockedLogin.mockResolvedValueOnce({ data: {} } as any)
+    mockedExtract.mockReturnValueOnce({ token: '', userId: '', tenantId: '' })
+
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.click(screen.getByRole('button', { name: '登录' }))
+
+    expect(await screen.findByText('登录返回无效，未收到 token')).toBeInTheDocument()
+    expect(navigateMock).not.toHaveBeenCalled()
   })
 })
