@@ -118,6 +118,10 @@ nav:
       - 设计纲要: framework.md
       - 技术选型: tech-selection.md
       - 概要设计: high-level-design.md
+      - 文档生成模块:
+          - 概览: doc-gen/index.md
+          - 架构设计: doc-gen/architecture.md
+          - 算法设计: doc-gen/algorithms.md
   - 关于:
       - CI 与本地开发: ci-and-local-dev.md
 
