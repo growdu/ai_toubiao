@@ -78,6 +78,7 @@ func run() error {
 
 	// ---- Auth endpoints (unauthenticated) ----
 	mux.HandleFunc("/api/v1/auth/login", loginHandler(authSvc, log))
+	mux.HandleFunc("/api/v1/auth/register", registerHandler(authSvc, log))
 	mux.HandleFunc("/api/v1/auth/refresh", refreshHandler(authSvc))
 
 	// ---- Health ----
@@ -98,6 +99,7 @@ func run() error {
 	r.Use(corsMiddleware)
 	r.Handle("/api/v1/auth/*", mux)
 	r.HandleFunc("/api/v1/auth/login", loginHandler(authSvc, log))
+	r.HandleFunc("/api/v1/auth/register", registerHandler(authSvc, log))
 	r.HandleFunc("/api/v1/auth/refresh", refreshHandler(authSvc))
 	r.Handle("/healthz", mux)
 	r.Handle("/api/v1/projects", proxyWithAuth)
@@ -297,6 +299,67 @@ func loginHandler(svc *auth.Service, log *slog.Logger) http.HandlerFunc {
 				"id":    user.ID,
 				"email": user.Email,
 				"role":  user.Role,
+			},
+		})
+	}
+}
+
+// registerHandler handles POST /api/v1/auth/register. On success it
+// returns the same shape as loginHandler so the front-end can drop the
+// user straight into /bids with no extra round-trip.
+func registerHandler(svc *auth.Service, log *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rid := sharedlogger.RequestIDFrom(r.Context())
+		var req auth.RegisterRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httperr.InvalidInput(w, rid, "invalid JSON: "+err.Error(), nil)
+			return
+		}
+		result, err := svc.Register(r.Context(), req)
+		if err != nil {
+			switch {
+			case errors.Is(err, auth.ErrInvalidInput):
+				// Surface the wrapped message so the user knows which
+				// field is bad; in the future we may want a structured
+				// per-field error response.
+				httperr.Write(w, http.StatusBadRequest, httperr.CodeInvalidInput, err.Error(), rid, nil)
+				return
+			case errors.Is(err, auth.ErrTenantSlugTaken):
+				httperr.Write(w, http.StatusConflict, httperr.CodeAlreadyExists,
+					"该工作区标识已被占用，请换一个", rid, nil)
+				return
+			case errors.Is(err, auth.ErrEmailTaken):
+				httperr.Write(w, http.StatusConflict, httperr.CodeAlreadyExists,
+					"该邮箱在此工作区已注册，请直接登录或换一个邮箱", rid, nil)
+				return
+			}
+			log.Error("register failed", slog.String("err", err.Error()))
+			httperr.InternalError(w, rid)
+			return
+		}
+
+		access, refresh, ttl, err := svc.IssueTokens(result.User)
+		if err != nil {
+			log.Error("issue tokens after register", slog.String("err", err.Error()))
+			httperr.InternalError(w, rid)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"access_token":  access,
+			"refresh_token": refresh,
+			"expires_in":    ttl,
+			"token_type":    "Bearer",
+			"tenant": map[string]any{
+				"id":   result.TenantID,
+				"name": result.TenantName,
+				"slug": result.TenantSlug,
+				"plan": result.Plan,
+			},
+			"user": map[string]any{
+				"id":    result.User.ID,
+				"email": result.User.Email,
+				"role":  result.User.Role,
 			},
 		})
 	}

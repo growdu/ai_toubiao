@@ -1,4 +1,5 @@
 import api from './client'
+import { decodeJWT } from '../lib/jwt'
 
 export interface LoginRequest {
   tenant_slug: string
@@ -9,25 +10,12 @@ export interface LoginRequest {
 export interface LoginResponse {
   access_token: string
   refresh_token: string
-  token_type: string
   expires_in: number
+  token_type: string
   user: {
     id: string
     email: string
     role: string
-  }
-}
-
-// decodeJWT extracts the payload from a JWT without verifying the signature.
-// Used to get tenant_id from the access token (which is set by the backend
-// but not included in the login response body).
-function decodeJWT(token: string): Record<string, unknown> {
-  try {
-    const payload = token.split('.')[1]
-    const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
-    return JSON.parse(decoded)
-  } catch {
-    return {}
   }
 }
 

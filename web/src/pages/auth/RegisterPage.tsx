@@ -1,21 +1,22 @@
 import { useState, FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button, TextInput } from '../../components/ui'
+import { useAuthStore } from '../../lib/auth'
+import { decodeJWT } from '../../lib/jwt'
+import api from '../../api/client'
 
-// RegisterPage lets a prospect create a tenant + owner account. The backend
-// doesn't expose /api/v1/auth/register yet (only login), so the form is
-// wired as a no-op stub that surfaces a "demo mode" notice and routes the
-// user to the login page. The visual + UX matches LoginPage so the
-// marketing funnel still feels coherent.
+// RegisterPage lets a prospect create a tenant + owner account. On success
+// it stores the JWT in the auth store (just like LoginPage does) and
+// navigates straight into /bids. Field validation is mirrored from the
+// backend so the user sees client-side errors before the round-trip.
 //
-// Plan:
-//   * When the backend ships POST /api/v1/auth/register, swap the
-//     submit handler to call it, log the user in, and navigate to /bids.
-//   * The ?plan= query param is preserved so we can route paying users
-//     straight to a checkout flow later.
+// Plan (?plan=pro|enterprise|trial) is surfaced in the subtitle and also
+// forwarded to the backend as initial_plan; the server decides what to
+// actually persist (defaults to "free" if missing/invalid).
 export default function RegisterPage() {
   const [params] = useSearchParams()
   const plan = params.get('plan') || 'trial'
+  const { setAuth } = useAuthStore()
 
   const [tenantName, setTenantName] = useState('')
   const [tenantSlug, setTenantSlug] = useState('')
@@ -26,7 +27,8 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const [shakeKey, setShakeKey] = useState(0)
 
-  // Auto-derive tenant slug from tenant name as the user types.
+  // Auto-derive tenant slug from tenant name as the user types, until
+  // they manually edit the slug (then we leave it alone).
   const onTenantNameChange = (v: string) => {
     setTenantName(v)
     if (!tenantSlug || tenantSlug === slugify(tenantName)) {
@@ -37,8 +39,17 @@ export default function RegisterPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
-    if (!agree) {
-      setError('请先同意服务条款和隐私政策')
+
+    // Client-side guardrails mirror the backend's validateRegisterInput.
+    // The user gets feedback before any round-trip; the server is the
+    // source of truth and may still reject if the client is wrong.
+    if (!tenantName.trim()) {
+      setError('请填写工作区名称')
+      setShakeKey(k => k + 1)
+      return
+    }
+    if (!slugRegex.test(tenantSlug)) {
+      setError('工作区标识只能包含小写字母、数字、连字符（3-32 位，首尾不能是连字符）')
       setShakeKey(k => k + 1)
       return
     }
@@ -47,13 +58,46 @@ export default function RegisterPage() {
       setShakeKey(k => k + 1)
       return
     }
+    if (!agree) {
+      setError('请先同意服务条款和隐私政策')
+      setShakeKey(k => k + 1)
+      return
+    }
+
     setLoading(true)
-    // Simulated registration. Replace with POST /api/v1/auth/register
-    // when the backend exposes it; on success, setAuth + navigate('/bids').
-    await new Promise(r => setTimeout(r, 800))
-    setLoading(false)
-    setError('注册接口尚未上线，请联系销售开通账号或使用 demo 账号登录体验。')
-    setShakeKey(k => k + 1)
+    try {
+      const res = await api.post<RegisterResponse>('/auth/register', {
+        tenant_name: tenantName.trim(),
+        tenant_slug: tenantSlug,
+        email: email.trim(),
+        password,
+        initial_plan: plan === 'trial' ? 'free' : plan,
+      })
+      const { access_token, user } = res.data
+      // Decode tenant_id from the JWT — backend doesn't echo it back as a
+      // separate field on the user object, but the Register response
+      // does include a tenant block. We use that directly here.
+      const claims = decodeJWT(access_token)
+      setAuth(access_token, user.id, claims.tenant_id as string || '')
+      // Navigate to the workspace; using window.location would also
+      // work but the in-app router preserves any in-memory state.
+      window.location.href = '/bids'
+    } catch (err: any) {
+      const code = err?.response?.data?.error?.code
+      const msg = err?.response?.data?.error?.message || '注册失败，请稍后重试'
+      // Map ALREADY_EXISTS messages to the field they apply to so the
+      // hint line in the banner can name the right input.
+      let hint = ''
+      if (code === 'ALREADY_EXISTS' && msg.includes('工作区标识')) {
+        hint = '换一个工作区标识再试'
+      } else if (code === 'ALREADY_EXISTS' && msg.includes('邮箱')) {
+        hint = '可改用其他邮箱，或直接登录'
+      }
+      setError(hint ? `${msg}（${hint}）` : msg)
+      setShakeKey(k => k + 1)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -188,7 +232,7 @@ export default function RegisterPage() {
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
                 <div className="flex-1 leading-snug">
-                  <div className="font-semibold text-red-800">无法继续</div>
+                  <div className="font-semibold text-red-800">注册失败</div>
                   <div className="text-red-700">{error}</div>
                 </div>
               </div>
@@ -219,6 +263,15 @@ export default function RegisterPage() {
   )
 }
 
+interface RegisterResponse {
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  token_type: string
+  tenant: { id: string; name: string; slug: string; plan: string }
+  user: { id: string; email: string; role: string }
+}
+
 function PlanBadge({ icon, title, hint }: { icon: string; title: string; hint: string }) {
   return (
     <div className="px-3 py-2.5 rounded-xl bg-white/10 backdrop-blur-sm border border-white/15">
@@ -229,8 +282,11 @@ function PlanBadge({ icon, title, hint }: { icon: string; title: string; hint: s
   )
 }
 
-// slugify converts a tenant name into a URL-safe identifier. Mirrors
-// common SaaS conventions: lowercase, no accents, hyphens for spaces.
+// slugRegex mirrors the backend's validateRegisterInput regex so the
+// client-side error message fires before the round-trip.
+const slugRegex = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/
+
+// slugify converts a tenant name into a URL-safe identifier.
 function slugify(s: string): string {
   return s
     .toLowerCase()

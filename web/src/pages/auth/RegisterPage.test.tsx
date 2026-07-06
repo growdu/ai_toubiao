@@ -55,11 +55,21 @@ describe('RegisterPage', () => {
 
   it('blocks submit when terms checkbox is not checked', async () => {
     renderRegister()
-    await typeInto(screen.getByLabelText(/工作区名称/) as HTMLInputElement, '测试租户')
-    await typeInto(screen.getByLabelText(/工作邮箱/) as HTMLInputElement, 'admin')
-    await typeInto(screen.getByLabelText(/工作邮箱/) as HTMLInputElement, '@')
-    await typeInto(screen.getByLabelText(/工作邮箱/) as HTMLInputElement, 'example.com')
-    await typeInto(screen.getByLabelText(/密码/) as HTMLInputElement, 'longenoughpw')
+    // Fill all required fields with valid data. validation order in
+    // the component is tenant_name → tenant_slug → password → terms;
+    // since we satisfy everything except terms, the terms error must
+    // be the one that surfaces.
+    const tenantInput = screen.getByLabelText(/工作区名称/) as HTMLInputElement
+    const slugInput = screen.getByLabelText(/工作区标识/) as HTMLInputElement
+    const emailInput = screen.getByLabelText(/工作邮箱/) as HTMLInputElement
+    const pwInput = screen.getByLabelText(/密码/) as HTMLInputElement
+    await typeInto(tenantInput, '测试租户')
+    await typeInto(slugInput, 'testco')
+    await typeInto(emailInput, 'admin')
+    await typeInto(emailInput, '@')
+    await typeInto(emailInput, 'example.com')
+    await typeInto(pwInput, 'longenoughpw')
+    // deliberately leave the agree checkbox unchecked
 
     fireEvent.click(screen.getByRole('button', { name: /创建账号/ }))
     expect(await screen.findByText('请先同意服务条款和隐私政策')).toBeInTheDocument()
@@ -67,12 +77,20 @@ describe('RegisterPage', () => {
 
   it('blocks submit when password is shorter than 8 chars', async () => {
     renderRegister()
-    await typeInto(screen.getByLabelText(/工作区名称/) as HTMLInputElement, '测试租户')
-    await typeInto(screen.getByLabelText(/工作邮箱/) as HTMLInputElement, 'admin')
-    await typeInto(screen.getByLabelText(/工作邮箱/) as HTMLInputElement, '@')
-    await typeInto(screen.getByLabelText(/工作邮箱/) as HTMLInputElement, 'example.com')
-    await typeInto(screen.getByLabelText(/密码/) as HTMLInputElement, 'short')
-    fireEvent.click(screen.getByRole('checkbox'))
+    // tenant + slug are valid, email is valid, password is too short.
+    // Validation short-circuits on the password rule so the password
+    // error must be the one that surfaces — even without ticking the
+    // agree checkbox (which is checked later in the chain).
+    const tenantInput = screen.getByLabelText(/工作区名称/) as HTMLInputElement
+    const slugInput = screen.getByLabelText(/工作区标识/) as HTMLInputElement
+    const emailInput = screen.getByLabelText(/工作邮箱/) as HTMLInputElement
+    const pwInput = screen.getByLabelText(/密码/) as HTMLInputElement
+    await typeInto(tenantInput, '测试租户')
+    await typeInto(slugInput, 'testco')
+    await typeInto(emailInput, 'admin')
+    await typeInto(emailInput, '@')
+    await typeInto(emailInput, 'example.com')
+    await typeInto(pwInput, 'short')
 
     fireEvent.click(screen.getByRole('button', { name: /创建账号/ }))
     expect(await screen.findByText('密码至少 8 位')).toBeInTheDocument()
