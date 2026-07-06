@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { bidsApi, BidJob } from '../../api/bids'
 import apiClient from '../../api/client'
 import { toast } from '../../lib/toast'
+import { usePageMeta } from '../../lib/usePageMeta'
 import {
   Button, Card, EmptyState, Modal, ProgressBar, StatCard,
   TextInput, StatusBadge, SkeletonCard,
@@ -18,6 +19,12 @@ const statusLabels: Record<string, string> = {
 type StatusFilter = 'all' | 'active' | 'done' | 'failed'
 
 export default function BidsPage() {
+  usePageMeta({
+    title: '标书管理',
+    description: '管理所有投标文件，跟踪每一份标书的编制进度。',
+    noindex: true,
+  })
+
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)

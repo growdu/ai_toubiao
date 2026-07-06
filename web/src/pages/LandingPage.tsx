@@ -1,11 +1,17 @@
 import { Link } from 'react-router-dom'
 import { Button } from '../components/ui'
+import { usePageMeta } from '../lib/usePageMeta'
 
 // LandingPage is the public marketing page. It introduces BidWriter, walks
 // through how it works, shows what's included, lists pricing tiers, and
 // ends with a CTA. Anyone can reach it; once they sign in we send them
 // to /bids (see the App-level redirect).
 export default function LandingPage() {
+  usePageMeta({
+    title: '首页',
+    description: '让标书编制快 10 倍、准确 100%。AI 自动生成大纲、检索证据链、撰写章节正文、合规审计，一键导出 Word。',
+  })
+
   return (
     <div className="min-h-screen bg-ink-50 text-ink-900">
       <TopNav />

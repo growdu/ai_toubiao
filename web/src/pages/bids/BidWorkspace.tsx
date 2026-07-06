@@ -11,8 +11,15 @@ import { MaterialPanel } from './MaterialPanel'
 import { ChapterTree } from './ChapterTree'
 import { ChapterEditor } from './ChapterEditor'
 import { ChapterInspector } from './ChapterInspector'
+import { usePageMeta } from '../../lib/usePageMeta'
 
 export default function BidWorkspace() {
+  usePageMeta({
+    title: '标书工作区',
+    description: '编辑标书章节、查看大纲、运行 AI 生成与导出 Word。',
+    noindex: true,
+  })
+
   const { id } = useParams<{ id: string }>()
   const queryClient = useQueryClient()
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
@@ -83,13 +90,46 @@ export default function BidWorkspace() {
     onError: (err: any) => toast.error('更新失败', err?.response?.data?.message),
   })
   const transitionMutation = useMutation({
-    mutationFn: ({ to, version }: { to: string; version: number }) =>
-      bidsApi.transition(id!, to, version, `transition to ${to}`),
+    // The backend uses optimistic locking: every transition bumps the bid's
+    // `version` column, and a request carrying the old version gets 409
+    // VERSION_CONFLICT. The common failure mode is a stale closure — the
+    // user's button handler captured bid.version from a previous render and
+    // the backend has since moved on. We retry on 409 by re-reading the
+    // current version via React Query's cached `bid` entry and replaying.
+    // Hard cap at 1 retry so a wedged state surfaces as a toast instead of
+    // spinning forever.
+    mutationFn: async ({ to, version }: { to: string; version: number }) => {
+      const call = (v: number) =>
+        bidsApi.transition(id!, to, v, `transition to ${to}${v !== version ? ' (retry)' : ''}`)
+      try {
+        return await call(version)
+      } catch (err: any) {
+        const status = err?.response?.status
+        const code = err?.response?.data?.error?.code
+        const isConflict = status === 409 || code === 'VERSION_CONFLICT'
+        if (!isConflict) throw err
+        // Pull the freshest cached bid.version. invalidateQueries was called
+        // by a prior successful transition, so the cache is usually one step
+        // ahead of the user's button click.
+        await queryClient.invalidateQueries({ queryKey: ['bid', id] })
+        const fresh = queryClient.getQueryData<any>(['bid', id])
+        const freshVersion = fresh?.data?.data?.version
+        if (typeof freshVersion !== 'number' || freshVersion === version) throw err
+        return await call(freshVersion)
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bid', id] })
       toast.success('工作流已推进')
     },
-    onError: (err: any) => toast.error('推进失败', err?.response?.data?.message),
+    onError: (err: any) => {
+      const code = err?.response?.data?.error?.code
+      const msg =
+        code === 'VERSION_CONFLICT'
+          ? '版本冲突且无法自动重试（请刷新页面）'
+          : err?.response?.data?.error?.message || err?.response?.data?.message || '未知错误'
+      toast.error('推进失败', msg)
+    },
   })
   const saveMaterialMutation = useMutation({
     mutationFn: (text: string) => bidsApi.saveMaterial(id!, text),

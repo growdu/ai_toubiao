@@ -4,6 +4,7 @@ import { Button, TextInput } from '../../components/ui'
 import { useAuthStore } from '../../lib/auth'
 import { decodeJWT } from '../../lib/jwt'
 import api from '../../api/client'
+import { usePageMeta } from '../../lib/usePageMeta'
 
 // RegisterPage lets a prospect create a tenant + owner account. On success
 // it stores the JWT in the auth store (just like LoginPage does) and
@@ -14,6 +15,12 @@ import api from '../../api/client'
 // forwarded to the backend as initial_plan; the server decides what to
 // actually persist (defaults to "free" if missing/invalid).
 export default function RegisterPage() {
+  usePageMeta({
+    title: '注册',
+    description: '14 天免费试用 BidWriter，完整功能无需信用卡。',
+    noindex: true,
+  })
+
   const [params] = useSearchParams()
   const plan = params.get('plan') || 'trial'
   const { setAuth } = useAuthStore()

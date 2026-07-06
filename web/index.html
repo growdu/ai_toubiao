@@ -3,9 +3,98 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="AI 驱动的智能标书编制系统 —— 自动生成大纲、检索证据链、章节内容、图表与审计" />
+
+    <!-- Primary meta — keeps the index.html fallback meaningful when the
+         SPA hasn't hydrated yet (e.g. for crawlers that don't run JS). -->
+    <title>AI 标书生成系统 · BidWriter</title>
+    <meta name="description" content="让标书编制快 10 倍、准确 100%。AI 自动生成大纲、检索证据链、撰写章节正文、合规审计，一键导出 Word。" />
+    <meta name="keywords" content="AI 标书,投标文件,智能标书,标书生成,RAG,大模型,标书编制" />
+    <meta name="author" content="BidWriter" />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://bidwriter.app/" />
+
+    <!-- Theme + favicon -->
     <meta name="theme-color" content="#224be0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Open Graph — Facebook / LinkedIn / Slack / Telegram preview cards -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AI 标书生成系统 · BidWriter" />
+    <meta property="og:title" content="让标书编制快 10 倍、准确 100% · AI 标书生成系统" />
+    <meta property="og:description" content="自动生成大纲 · 检索证据链 · 撰写章节正文 · 合规审计 · 一键导出 Word。14 天免费试用，无需信用卡。" />
+    <meta property="og:url" content="https://bidwriter.app/" />
+    <meta property="og:image" content="https://bidwriter.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="BidWriter — AI 标书生成系统产品预览" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="让标书编制快 10 倍、准确 100% · BidWriter" />
+    <meta name="twitter:description" content="自动生成大纲 · 检索证据链 · 撰写章节正文 · 合规审计 · 一键导出 Word。" />
+    <meta name="twitter:image" content="https://bidwriter.app/og-image.png" />
+    <meta name="twitter:image:alt" content="BidWriter — AI 标书生成系统产品预览" />
+
+    <!-- Structured data — JSON-LD describing the product. Crawlers
+         (Google, Bing) use this for rich result cards. We declare a
+         SoftwareApplication with offers for each plan tier. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "BidWriter",
+      "alternateName": "AI 标书生成系统",
+      "url": "https://bidwriter.app/",
+      "applicationCategory": "BusinessApplication",
+      "applicationSubCategory": "投标文件编制工具",
+      "operatingSystem": "Web",
+      "inLanguage": "zh-CN",
+      "description": "AI 驱动的智能标书编制系统。自动解析招标文件、生成大纲、检索证据链、撰写章节正文、合规审计，一键导出 Word。",
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "免费试用",
+          "price": "0",
+          "priceCurrency": "CNY",
+          "description": "14 天免费试用，完整功能"
+        },
+        {
+          "@type": "Offer",
+          "name": "专业版",
+          "price": "299",
+          "priceCurrency": "CNY",
+          "priceSpecification": {
+            "@type": "UnitPriceSpecification",
+            "price": "299",
+            "priceCurrency": "CNY",
+            "unitText": "月"
+          }
+        },
+        {
+          "@type": "Offer",
+          "name": "企业版",
+          "priceSpecification": {
+            "@type": "PriceSpecification",
+            "priceCurrency": "CNY",
+            "valueAddedTaxIncluded": "false"
+          },
+          "description": "私有部署，联系销售报价"
+        }
+      ],
+      "featureList": [
+        "智能大纲生成",
+        "章节正文撰写",
+        "RAG 证据检索",
+        "图表自动渲染",
+        "合规审计",
+        "人在回路"
+      ]
+    }
+    </script>
+
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -25,7 +114,6 @@
         } catch (_) { /* noop */ }
       })();
     </script>
-    <title>AI 标书生成系统</title>
   </head>
   <body>
     <div id="root"></div>

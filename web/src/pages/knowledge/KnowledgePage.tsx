@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../../api/client'
 import { toast } from '../../lib/toast'
+import { usePageMeta } from '../../lib/usePageMeta'
 import {
   Button, Card, EmptyState, Modal, StatCard, StatusBadge,
   TextArea, TextInput, Select, SkeletonCard,
@@ -60,6 +61,12 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 export default function KnowledgePage() {
+  usePageMeta({
+    title: '知识库',
+    description: '管理企业资质、过往标书、案例素材等可供 AI 引用的证据库。',
+    noindex: true,
+  })
+
   const queryClient = useQueryClient()
   const [showUpload, setShowUpload] = useState(false)
   const [form, setForm] = useState<CreateMaterialRequest>({ category: 'other', title: '', content: '' })

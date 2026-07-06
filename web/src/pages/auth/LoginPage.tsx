@@ -3,8 +3,15 @@ import { useNavigate, Link } from 'react-router-dom'
 import { authApi } from '../../api/auth'
 import { useAuthStore } from '../../lib/auth'
 import { Button, TextInput } from '../../components/ui'
+import { usePageMeta } from '../../lib/usePageMeta'
 
 export default function LoginPage() {
+  usePageMeta({
+    title: '登录',
+    description: '登录 BidWriter 工作区，继续你的 AI 标书编制流程。',
+    noindex: true,
+  })
+
   const navigate = useNavigate()
   const { setAuth } = useAuthStore()
   const [tenantSlug, setTenantSlug] = useState('')

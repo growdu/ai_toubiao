@@ -2,8 +2,15 @@ import { useAuthStore } from '../../lib/auth'
 import { useThemeStore, ThemeMode } from '../../lib/theme'
 import { Card, StatusBadge } from '../../components/ui'
 import { ThemeToggle } from '../../components/ThemeToggle'
+import { usePageMeta } from '../../lib/usePageMeta'
 
 export default function SettingsPage() {
+  usePageMeta({
+    title: '设置',
+    description: '管理账号、通知偏好、主题与系统信息。',
+    noindex: true,
+  })
+
   const { userId, tenantId, token } = useAuthStore()
   const mode = useThemeStore(s => s.mode)
   const resolved = useThemeStore(s => s.resolved)
