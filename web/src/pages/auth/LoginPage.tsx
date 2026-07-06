@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react'
+import { useState, FormEvent, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../../api/auth'
 import { useAuthStore } from '../../lib/auth'
@@ -12,6 +12,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState('password123')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // Counter incremented on every failed submit so the wrapper <form>
+  // re-runs its key-based animation. Reset on the next successful submit.
+  const [shakeKey, setShakeKey] = useState(0)
+  const passwordRef = useRef<HTMLInputElement | null>(null)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -22,12 +26,17 @@ export default function LoginPage() {
       const { token, userId, tenantId } = authApi.extractAuthInfo(res)
       if (!token) {
         setError('登录返回无效，未收到 token')
+        setShakeKey(k => k + 1)
         return
       }
       setAuth(token, userId, tenantId)
       navigate('/bids')
     } catch (err: any) {
       setError(err.response?.data?.message || err.response?.data?.error?.message || '登录失败')
+      setShakeKey(k => k + 1)
+      // Pull focus back to password so the user can immediately correct it.
+      // Don't fire during loading transitions where the input is unmounted.
+      setTimeout(() => passwordRef.current?.focus(), 0)
     } finally {
       setLoading(false)
     }
@@ -100,7 +109,7 @@ export default function LoginPage() {
           <h2 className="text-2xl font-bold text-ink-900 mb-1">欢迎回来</h2>
           <p className="text-sm text-ink-500 mb-8">使用您的租户账号登录系统</p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form key={shakeKey} onSubmit={handleSubmit} className="space-y-4">
             <TextInput
               label="租户标识"
               value={tenantSlug}
@@ -119,6 +128,7 @@ export default function LoginPage() {
               autoComplete="email"
             />
             <TextInput
+              ref={passwordRef}
               label="密码"
               type="password"
               value={password}
@@ -129,13 +139,36 @@ export default function LoginPage() {
             />
 
             {error && (
-              <div className="flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700 animate-fade-in">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="flex items-start gap-2.5 px-3 py-2.5 bg-red-50 border-2 border-red-200 rounded-lg text-sm text-red-700 animate-shake"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-red-500">
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="8" x2="12" y2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
-                <span>{error}</span>
+                <div className="flex-1 leading-snug">
+                  <div className="font-semibold text-red-800">登录失败</div>
+                  <div className="text-red-700">{error}</div>
+                  {error.includes('密码') || error.includes('邮箱') ? (
+                    <div className="mt-1 text-xs text-red-600/80">
+                      请检查租户标识、邮箱、密码是否正确（默认 demo 账号密码为 password123）
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setError('')}
+                  className="shrink-0 -mr-1 -mt-1 p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-100 transition-colors"
+                  aria-label="关闭错误提示"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
               </div>
             )}
 

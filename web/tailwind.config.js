@@ -62,6 +62,7 @@ export default {
         'scale-in':   'scaleIn 180ms cubic-bezier(0.16, 1, 0.3, 1)',
         'shimmer':    'shimmer 2s linear infinite',
         'pulse-soft': 'pulseSoft 2.4s ease-in-out infinite',
+        'shake':      'shake 420ms cubic-bezier(.36,.07,.19,.97) both',
       },
       keyframes: {
         fadeIn:   { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
@@ -70,6 +71,10 @@ export default {
         scaleIn:  { '0%': { opacity: '0', transform: 'scale(0.96)' }, '100%': { opacity: '1', transform: 'scale(1)' } },
         shimmer:  { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
         pulseSoft:{ '0%,100%': { opacity: '1' }, '50%': { opacity: '0.55' } },
+        // 4 horizontal jolts of decreasing amplitude so the form feels
+        // "rejected" rather than endlessly vibrating. The 2nd-half dampening
+        // matches Material's standard error-feedback animation.
+        shake:    { '10%,90%': { transform: 'translate3d(-1px, 0, 0)' }, '20%,80%': { transform: 'translate3d(2px, 0, 0)' }, '30%,50%,70%': { transform: 'translate3d(-4px, 0, 0)' }, '40%,60%': { transform: 'translate3d(4px, 0, 0)' } },
       },
     },
   },

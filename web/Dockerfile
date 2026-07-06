@@ -6,6 +6,14 @@
 # Build args:
 #   VITE_API_BASE   API base URL baked into the bundle (default: same-origin /api)
 #
+# Requires: Docker with BuildKit (the legacy builder is deprecated in
+# Docker 28+ and removed in 29+). On a clean host:
+#   docker buildx create --use
+#   docker buildx build -f web/Dockerfile -t bidwriter/web:latest .
+# Plain `docker build` also works on Docker 27 and earlier; on 29+ the
+# default builder errors with "no build stage in current context" and you
+# must either install the buildx plugin or use the older Docker engine.
+#
 # Example:
 #   docker build -f web/Dockerfile \
 #     --build-arg VITE_API_BASE=/api \
@@ -13,15 +21,35 @@
 
 ARG NODE_VERSION=20
 
+# Pin pnpm to a version compatible with Node 20. corepack's default behaviour
+# is to fetch the latest pnpm (v11+ as of mid-2026), which requires Node 22+
+# at runtime and breaks `corepack enable && pnpm install` on the node:20-alpine
+# base image (this was the original pnpm-11-vs-node-20 failure). Locked pnpm@9
+# works on Node 18 / 20 / 22 and is what the lockfile in this repo was generated
+# against. If the lockfile is missing we fall back to npm ci.
+ARG PNPM_VERSION=9.15.4
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
 # ---------------------------------------------------------------------------
 # Stage 1: install dependencies (cached layer)
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS deps
 WORKDIR /app
-# Copy lockfile first so this layer is cached when only source changes.
-COPY web/package.json web/pnpm-lock.yaml* ./
-RUN corepack enable \
- && (test -f pnpm-lock.yaml && pnpm install --frozen-lockfile || npm ci)
+
+# Copy both manifests so the layer is busted when EITHER changes.
+COPY web/package.json web/pnpm-lock.yaml* web/package-lock.json* ./
+
+# Use pnpm when the lockfile is present (the normal case for this repo),
+# otherwise npm ci. We do NOT call `corepack enable` because that pulls the
+# latest pnpm on first run — instead we install a specific version via the
+# standalone package, which is reproducible across base image rebuilds.
+RUN if [ -f pnpm-lock.yaml ]; then \
+      npm install -g "[email protected]" --silent && \
+      pnpm install --frozen-lockfile; \
+    else \
+      npm ci; \
+    fi
 
 # ---------------------------------------------------------------------------
 # Stage 2: build the production bundle
@@ -34,8 +62,13 @@ ENV VITE_API_BASE=${VITE_API_BASE}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ ./
-RUN corepack enable \
- && (test -f pnpm-lock.yaml && pnpm run build || npm run build)
+
+RUN if [ -f pnpm-lock.yaml ]; then \
+      npm install -g "[email protected]" --silent && \
+      pnpm run build; \
+    else \
+      npm run build; \
+    fi
 
 # ---------------------------------------------------------------------------
 # Stage 3: serve with nginx (tiny, well-known, has health endpoint)
