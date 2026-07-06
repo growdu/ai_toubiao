@@ -30,13 +30,14 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
-          path="/*"
+          path="/"
           element={
             <ProtectedRoute>
               <Layout />
             </ProtectedRoute>
           }
         >
+          <Route index element={<Navigate to="/bids" replace />} />
           <Route path="bids" element={<BidsPage />} />
           <Route path="bids/:id" element={<BidWorkspace />} />
           <Route path="bids/:id/export" element={<ExportPage />} />

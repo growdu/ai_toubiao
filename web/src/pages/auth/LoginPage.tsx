@@ -9,7 +9,7 @@ export default function LoginPage() {
   const { setAuth } = useAuthStore()
   const [tenantSlug, setTenantSlug] = useState('demo-a')
   const [email, setEmail] = useState('admin@demo-a.test')
-  const [password, setPassword] = useState('admin123')
+  const [password, setPassword] = useState('password123')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -155,7 +155,7 @@ export default function LoginPage() {
                 {' / '}
                 <span className="font-mono text-ink-600">admin@demo-a.test</span>
                 {' / '}
-                <span className="font-mono text-ink-600">admin123</span>
+                <span className="font-mono text-ink-600">password123</span>
               </p>
             </div>
           </form>
