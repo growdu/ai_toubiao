@@ -1,5 +1,5 @@
 import { useState, FormEvent, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { authApi } from '../../api/auth'
 import { useAuthStore } from '../../lib/auth'
 import { Button, TextInput } from '../../components/ui'
@@ -7,9 +7,9 @@ import { Button, TextInput } from '../../components/ui'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setAuth } = useAuthStore()
-  const [tenantSlug, setTenantSlug] = useState('demo-a')
-  const [email, setEmail] = useState('admin@demo-a.test')
-  const [password, setPassword] = useState('password123')
+  const [tenantSlug, setTenantSlug] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   // Counter incremented on every failed submit so the wrapper <form>
@@ -184,11 +184,10 @@ export default function LoginPage() {
 
             <div className="text-center pt-2">
               <p className="text-xs text-ink-400">
-                测试账号：<span className="font-mono text-ink-600">demo-a</span>
-                {' / '}
-                <span className="font-mono text-ink-600">admin@demo-a.test</span>
-                {' / '}
-                <span className="font-mono text-ink-600">password123</span>
+                没有账号？
+                <Link to="/register" className="ml-1 text-brand-600 hover:underline font-medium">
+                  免费试用 14 天
+                </Link>
               </p>
             </div>
           </form>

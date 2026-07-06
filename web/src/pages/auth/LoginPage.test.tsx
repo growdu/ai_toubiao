@@ -62,9 +62,10 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    // Default form values match demo-a / admin@demo-a.test / password123, so we
-    // just submit. Override password to verify it's sent.
-    await user.clear(screen.getByPlaceholderText('••••••••'))
+    // Form starts empty (no hard-coded demo values). Type all three
+    // fields and submit.
+    await user.type(screen.getByPlaceholderText('demo-a'), 'demo-a')
+    await user.type(screen.getByPlaceholderText('admin@example.com'), 'admin@demo-a.test')
     await user.type(screen.getByPlaceholderText('••••••••'), 'hunter2')
 
     await user.click(screen.getByRole('button', { name: '登录' }))

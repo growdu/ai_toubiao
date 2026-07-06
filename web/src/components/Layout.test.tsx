@@ -15,6 +15,9 @@ function renderAt(path: string) {
           <Route path="/knowledge/*" element={<div>knowledge-page</div>} />
           <Route path="/settings/*" element={<div>settings-page</div>} />
         </Route>
+        {/* catch-all so logout's navigate('/login') resolves to a node
+            instead of throwing "No routes matched location /login" */}
+        <Route path="*" element={<div data-testid="route-fallback" />} />
       </Routes>
     </MemoryRouter>
   )
