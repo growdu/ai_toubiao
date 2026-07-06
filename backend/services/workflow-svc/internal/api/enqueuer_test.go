@@ -12,10 +12,12 @@ import (
 
 // fakeEnqueuer records which dispatch methods were called.
 type fakeEnqueuer struct {
-	outlineCalled  bool
-	chaptersCalled bool
-	auditCalled    bool
-	exportCalled   bool
+	outlineCalled    bool
+	chaptersCalled   bool
+	chapterCalled    bool
+	chapterCallTitle string
+	auditCalled      bool
+	exportCalled     bool
 }
 
 func (f *fakeEnqueuer) EnqueueOutline(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) error {
@@ -24,6 +26,11 @@ func (f *fakeEnqueuer) EnqueueOutline(context.Context, uuid.UUID, uuid.UUID, uui
 }
 func (f *fakeEnqueuer) EnqueueChaptersForBid(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
 	f.chaptersCalled = true
+	return nil
+}
+func (f *fakeEnqueuer) EnqueueChapter(_ context.Context, _, _, _, _ uuid.UUID, title string) error {
+	f.chapterCalled = true
+	f.chapterCallTitle = title
 	return nil
 }
 func (f *fakeEnqueuer) EnqueueAudit(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {

@@ -3,8 +3,6 @@ package workers
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/bidwriter/services/workflow-svc/internal/model"
@@ -57,11 +55,8 @@ func (f *fakeTransitioner) Transition(ctx context.Context, workflowID uuid.UUID,
 	return f.returnsErr
 }
 
-// silentLogger discards everything (Watcher also accepts nil but slog.New
-// guarantees a non-nil handle in tests).
-func silentLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
-}
+// silentLogger is defined in auditor_test.go and shared across all
+// workers test files (Go test compilation unit covers the whole package).
 
 // ============================================================================
 // Check — pure decisions, no I/O side-effects

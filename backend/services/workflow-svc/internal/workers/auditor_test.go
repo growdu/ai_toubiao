@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bidwriter/services/workflow-svc/internal/model"
 	"github.com/hibiken/asynq"
@@ -282,24 +284,50 @@ func TestAuditorWorker_Process_InvalidPayload(t *testing.T) {
 // ============================================================================
 
 func TestAuditClient_TriggerSyncAudit_PostsAsyncFalseAndDecodesStatus(t *testing.T) {
-	var gotBody string
 	var gotAsyncHeader bool
 	var gotAsyncContentType bool
+	var gotPath string
+	// Reading r.Body before WriteHeader triggers a chunked-encoding
+	// deadlock: the http server won't flush response headers until the
+	// handler returns, the http client won't send more request body
+	// until the response headers arrive, and both sides block forever.
+	// Two ways out:
+	//   (a) declare a Content-Length up front so the client knows when
+	//       to stop sending — what the previous attempt did. But the
+	//       client here uses chunked transfer too, and chunked output
+	//       from the server still won't be flushed until the handler
+	//       returns.
+	//   (b) Drain the body in a goroutine that writes into a channel,
+	//       and respond immediately. The body read continues in the
+	//       background; the assertion that uses it happens after
+	//       server shutdown.
+	// We use (b) because it matches the real-world pattern of services
+	// that respond before fully consuming the request body (audit-svc
+	// itself reads the body in a worker goroutine).
+	bodyCh := make(chan string, 1)
+	responseBody := []byte(`{"data":{"report":{"status":"done","passed":true},"issues":[]}}`)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAsyncContentType = strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")
 		gotAsyncHeader = r.Header.Get("X-Tenant-ID") != ""
+		gotPath = r.URL.Path
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if !strings.HasSuffix(r.URL.Path, "/api/v1/audit/bidjobs/"+uuid.New().String()+"/report") && r.URL.Path == "" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		buf, _ := io.ReadAll(r.Body)
-		gotBody = string(buf)
+		// Drain body off the request goroutine so the response can flush.
+		go func() {
+			buf, _ := io.ReadAll(r.Body)
+			bodyCh <- string(buf)
+		}()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(responseBody)))
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":{"report":{"status":"done","passed":true},"issues":[]}}`))
+		_, _ = w.Write(responseBody)
 	}))
 	defer srv.Close()
+	// bodyCh is buffered; if the handler goroutine never gets to send
+	// (e.g. because the client hung up), the channel is simply GC'd
+	// along with the test function — no close needed, and closing
+	// before the goroutine sends would panic.
 
 	bidID := uuid.New()
 	tenantID := uuid.New()
@@ -317,8 +345,27 @@ func TestAuditClient_TriggerSyncAudit_PostsAsyncFalseAndDecodesStatus(t *testing
 	if !gotAsyncHeader {
 		t.Error("missing X-Tenant-ID")
 	}
+
+	// Body assertions happen after the response was delivered, so the
+	// background drain is guaranteed to have finished (or we wait briefly
+	// for it). A select on bodyCh keeps the test bounded if the goroutine
+	// hangs for any reason.
+	var gotBody string
+	select {
+	case gotBody = <-bodyCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for request body drain")
+	}
 	if !strings.Contains(gotBody, `"async":false`) {
 		t.Errorf("expected async:false in body, got %s", gotBody)
+	}
+	// Sanity check on routing: the URL the server actually saw should
+	// contain the bid ID we sent (the previous version of this test used
+	// uuid.New() in the suffix and never matched anything — a silent bug
+	// that this assertion now pins).
+	wantSuffix := "/api/v1/audit/bidjobs/" + bidID.String() + "/report"
+	if !strings.HasSuffix(gotPath, wantSuffix) {
+		t.Errorf("unexpected path: got %q, want suffix %q", gotPath, wantSuffix)
 	}
 }
 
