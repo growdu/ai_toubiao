@@ -7,6 +7,72 @@ in `YYYY-MM-DD`.
 ## [Unreleased]
 
 ### Added
+- **Hybrid KB retrieval** (vector + BM25 + RRF):
+  - `kb_store.SearchChunksBM25` uses `plainto_tsquery('simple', ...)`
+    so callers can pass natural-language strings; 'simple' config
+    treats each CJK char as a token, which matches the trigger
+    population strategy.
+  - `kb_store.RRFuse` promoted from un-exported helper to public
+    method so the service layer can fuse without leaking the helper.
+  - `KBService.Search` dispatches on `req.Mode` (vector / bm25 /
+    hybrid). Hybrid over-fetches 3x and runs RRF; if embed fails it
+    degrades to BM25-only rather than returning empty.
+  - New `/api/v1/kb/ingest` body has `{ material_id }`; the router
+    previously had no path param so ingest couldn't be triggered
+    end-to-end.
+- **PostgreSQL integration tests** (real PG @ bidwriter-pg-test:5434):
+  - `kb_store_integration_test.go`: UUID chunk insert against old
+    BIGSERIAL schema (fails as expected), against migration 00013
+    schema (passes), BM25 search with Chinese tokens, hybrid RRF
+    fusion ranking.
+  - Tests skip when `DATABASE_URL_TEST_PG` is unset so unit-only
+    runs stay green.
+- **MinIO integration tests** (real MinIO @ bidwriter-minio-test:9100):
+  - `s3_minio_integration_test.go`: upload + Get + Delete round-trip
+    plus a 16MB large-file upload case to exercise multipart paths.
+    Skips when `MINIO_TEST_ENDPOINT` unset.
+- **Single-container deployment stack**:
+  - `scripts/build-services.sh`: docker golang:1.25-alpine builder
+    that compiles all 10 services to `/tmp/bidwriter-bin` (host has
+    no Go toolchain).
+  - `scripts/start-stack.sh`: launches the 10 binaries in one
+    `alpine:3.20` container via supervisor (`stack-entrypoint.sh`),
+    exposing only api-gateway (7080) to the host.
+  - `scripts/stack-entrypoint.sh`: per-service env (HTTP_ADDR,
+    SERVICE_NAME, PORT) + derives REDIS_ADDR from REDIS_URL for
+    workflow-svc since it reads REDIS_ADDR, not REDIS_URL.
+
+### Fixed
+- **Login-to-home flow** (the "clicked login but can't get into the
+  home page" report): LoginPage pre-filled password was `admin123`
+  (hard-coded) but the real bcrypt-hashed demo password is
+  `password123`. Same typo in the test-account hint below the form,
+  so submitting the default form 401'd every time. Both the default
+  state and the hint now read `password123`.
+- **Root route renders empty**: `App.tsx` mounted the protected
+  layout under `path="/*"` with no index route, so visiting `/`
+  rendered an empty `<Outlet />`. Changed to `path="/"` with an
+  explicit `<Route index element={<Navigate to="/bids" replace />} />`
+  so the root path now redirects into the bids list. Also avoids
+  the React Router v7 splat-resolution warning.
+- **workflow-svc redis disconnect**: `config.Load()` reads REDIS_ADDR
+  while docker run injected REDIS_URL, so asynq workers tried to
+  dial `[::1]:6379` (the default) and Dequeue error'd every 2s.
+  `stack-entrypoint.sh` now derives REDIS_ADDR from REDIS_URL when
+  launching workflow-svc, falling back to `host.docker.internal:6390`.
+- **workflow-svc test cascade**: silentLogger redeclared,
+  AuditClient httptest chunked-deadlock, fakeEnqueuer missing
+  EnqueueAllTasks/EnqueueExport. All three now compile and pass.
+
+### Changed
+- **package-lock.json** synced with the dev deps that were added
+  when the vitest + RTL test suite landed (LoginPage, Layout,
+  toast, useHotkey). The deps were installed into node_modules
+  during the previous session but the lockfile wasn't committed,
+  so fresh installs on a clean host would have skipped them.
+
+### Previous session entries
+
 - **Web component tests** (vitest + @testing-library/react): `LoginPage`
   (5 cases) and `Layout` (5 cases). Covers render, submit, error path,
   loading state, navigation, role-based UI, and the "trailing path

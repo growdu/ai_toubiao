@@ -144,14 +144,14 @@ ai_toubiao/
 
 | 服务 | 状态 | 说明 |
 |------|------|------|
-| api-gateway | 完整 | JWT 认证、限流、路由代理 |
+| api-gateway | 完整 | JWT 认证、限流、路由代理（含知识库代理） |
 | project-svc | 完整 | Project CRUD、多租户隔离 |
 | router-svc | 完整 | AI Provider 路由、LRU 缓存 |
-| workflow-svc | 完整 | 状态机、事件溯源 |
-| document-svc | 部分 | 解析完成，存储待实现 S3/MinIO |
-| knowledge-svc | 部分 | 向量搜索待完善 |
+| workflow-svc | 完整 | 状态机、事件溯源、Asynq 队列、MinIO 大文件 |
+| document-svc | 完整 | Word/PDF 导出、MinIO 后端、含 16MB 大文件集成测试 |
+| knowledge-svc | 完整 | 向量检索 + BM25 + 混合 RRF、UUID chunk ID、TSV 触发器 |
 | audit-svc | 完整 | 合规审查、一致性检查、废标项扫描 |
-| template-svc | 完整 | Word 模板 CRUD |
+| template-svc | 完整 | Word 模板 CRUD、MinIO 后端 |
 | billing-svc | 完整 | 预算管理、交易记录 |
 | notify-svc | 完整 | 多渠道通知偏好 |
 
@@ -205,6 +205,63 @@ ai_toubiao/
 | Markdown 风格 | markdownlint-cli2 | 严格 |
 | Mermaid 块渲染 | mermaid.js + Chrome | 严格 |
 
+## 部署（单容器 10 服务）
+
+把 10 个 Go 服务 + 共享前端打到一台机器上跑：
+
+```bash
+cd backend
+
+# 1. 启基础设施（PG + MinIO + Redis）
+docker compose -f docker-compose.yml up -d
+
+# 2. 编译 10 个 Go 服务（用 docker golang:1.25-alpine 因为主机没 Go）
+./scripts/build-services.sh
+
+# 3. 单容器跑 10 服务（api-gateway:7080 对外暴露）
+./scripts/start-stack.sh start
+
+# 4. 部署前端（dist + nginx:alpine）
+cd ../web && npm install && npm run build
+docker run -d --name bidwriter-web \
+  --network bidwriter-net \
+  -v $(pwd)/dist:/usr/share/nginx/html:ro \
+  -p 8081:80 nginx:1.27-alpine
+```
+
+### Demo 登录
+
+初始化时 seed 文件 (`migrations/00002_seed_dev.sql`) 给了三个测试账号。
+**注意**：seed 里的 bcrypt hash 与 README 中标注的密码可能因 hash 漂移
+而对不上；第一次登录失败时用以下 SQL 重置：
+
+```sql
+-- 在容器里执行（密码统一为 password123）
+docker exec bidwriter-pg-test psql -U postgres -d bidwriter <<'SQL'
+-- 重新生成 password123 的 hash，然后用它更新
+UPDATE users SET password_hash = '<新 hash>' WHERE email IN (
+  'admin@demo-a.test','member@demo-a.test','admin@demo-b.test'
+);
+SQL
+```
+
+生成 hash 的最简办法：
+```bash
+docker run --rm -v $(pwd)/tmp:/tmp -w /tmp golang:1.25-alpine sh -c '
+  go mod init tmp >/dev/null 2>&1
+  go get golang.org/x/crypto/bcrypt >/dev/null 2>&1
+  echo "package main
+import (\"fmt\"; \"golang.org/x/crypto/bcrypt\")
+func main() { h,_:=bcrypt.GenerateFromPassword([]byte(\"password123\"),10); fmt.Println(string(h)) }" > main.go
+  go run main.go
+'
+```
+
+最终登录凭据：
+- `demo-a` / `admin@demo-a.test` / `password123` (owner)
+- `demo-a` / `member@demo-a.test` / `password123` (member)
+- `demo-b` / `admin@demo-b.test` / `password123` (owner)
+
 ## 本地开发
 
 ### 后端
@@ -245,8 +302,8 @@ Private · 仅供内部使用
 
 | 类别 | 数量 | 说明 |
 |---|---|---|
-| 后端 Test 函数 | 232 | 33 个 `_test.go`,覆盖 25 个包,0 失败 |
-| 前端 vitest | 23 | 4 个 `*.test.{ts,tsx}`(LoginPage, Layout, auth store, bids api) |
+| 后端 Test 函数 | 365 | 49 个 `_test.go`，11 个服务 + shared，含 5 个真实 PG/MinIO 集成测试 |
+| 前端 vitest | ~90 | 8 个 `*.test.{ts,tsx}`（LoginPage、Layout、auth、bids、toast、useHotkey、theme、CommandPalette） |
 
 性能基准 (Go `testing.B`):
 
