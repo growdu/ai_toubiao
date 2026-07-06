@@ -14,6 +14,7 @@ import (
 	"github.com/bidwriter/services/knowledge-svc/internal/store"
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
+	"github.com/bidwriter/shared/pkg/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -73,7 +74,8 @@ func (h *Handlers) createMaterial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m, err := h.KBService.CreateMaterial(r.Context(), &req)
+	ctx := tenantCtxFromHeader(r)
+	m, err := h.KBService.CreateMaterial(ctx, &req)
 	if err != nil {
 		h.Log.Error("create material", slog.String("err", err.Error()))
 		httperr.InternalError(w, rid)
@@ -91,7 +93,13 @@ func (h *Handlers) listMaterials(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
 
-	materials, err := h.KBService.ListMaterials(r.Context(), category, limit, offset)
+	// The store layer reads tenant_id from ctx (see tenant.FromContext).
+	// The api-gateway already authenticates and propagates X-Tenant-ID
+	// via the request header; we lift it into ctx here so the store
+	// doesn't need to read headers itself.
+	ctx := tenantCtxFromHeader(r)
+
+	materials, err := h.KBService.ListMaterials(ctx, category, limit, offset)
 	if err != nil {
 		h.Log.Error("list materials", slog.String("err", err.Error()))
 		httperr.InternalError(w, rid)
@@ -183,7 +191,8 @@ func (h *Handlers) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.KBService.Ingest(r.Context(), &req); err != nil {
+	ctx := tenantCtxFromHeader(r)
+	if err := h.KBService.Ingest(ctx, &req); err != nil {
 		h.Log.Error("ingest", slog.String("err", err.Error()))
 		httperr.InternalError(w, rid)
 		return
@@ -192,6 +201,22 @@ func (h *Handlers) ingest(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers ----
+
+// tenantCtxFromHeader lifts X-Tenant-ID from the request header into ctx.
+// The api-gateway authenticates and propagates tenant identity via this
+// header; downstream store layers (which use tenant.FromContext) expect
+// it in ctx. If the header is missing or malformed the ctx is returned
+// unchanged — the store call will then fail with "no tenant in context",
+// which surfaces as a 500 to the client. That is intentional: a request
+// that bypassed api-gateway's auth middleware is a misconfiguration, not
+// a recoverable error from the user's perspective.
+func tenantCtxFromHeader(r *http.Request) context.Context {
+	tid := r.Header.Get("X-Tenant-ID")
+	if tid == "" {
+		return r.Context()
+	}
+	return tenant.WithTenant(r.Context(), tid)
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

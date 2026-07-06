@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/bidwriter/services/knowledge-svc/internal/model"
@@ -179,6 +180,131 @@ func (s *Store) DeleteMaterial(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// SearchChunksBM25 performs full-text search using the precomputed
+// content_tsv column (populated by the trg_kb_chunks_tsv trigger from
+// migration 00013). The score is plaintsQuery rank * 1e-4 normalized
+// to roughly [0, 1] by clamping — this is a quick heuristic, not a
+// calibrated probability, but it preserves the relative ordering that
+// the hybrid merger needs.
+//
+// We use plainto_tsquery (not to_tsquery) so callers can pass arbitrary
+// natural-language strings; plainto_tsquery AND-joins the lexemes it
+// extracts. The 'simple' config does not stem and treats each CJK char
+// as a token, which matches the trigger.
+//
+// category="" returns all categories.
+func (s *Store) SearchChunksBM25(ctx context.Context, tenantID uuid.UUID, query string, topK int, category string) ([]model.KBSearchResult, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	if topK > 50 {
+		topK = 50
+	}
+
+	var q string
+	var args []any
+	if category != "" {
+		q = `
+			SELECT c.id, c.material_id, m.title, c.content, c.chunk_index,
+			       LEAST(1.0, ts_rank(c.content_tsv, plainto_tsquery('simple', $2)) * 100.0) AS score
+			FROM kb_chunks c
+			JOIN kb_materials m ON m.id = c.material_id
+			WHERE c.tenant_id = $1 AND m.category = $3
+			  AND c.content_tsv @@ plainto_tsquery('simple', $2)
+			ORDER BY score DESC
+			LIMIT $4`
+		args = []any{tenantID, query, category, topK}
+	} else {
+		q = `
+			SELECT c.id, c.material_id, m.title, c.content, c.chunk_index,
+			       LEAST(1.0, ts_rank(c.content_tsv, plainto_tsquery('simple', $2)) * 100.0) AS score
+			FROM kb_chunks c
+			JOIN kb_materials m ON m.id = c.material_id
+			WHERE c.tenant_id = $1
+			  AND c.content_tsv @@ plainto_tsquery('simple', $2)
+			ORDER BY score DESC
+			LIMIT $3`
+		args = []any{tenantID, query, topK}
+	}
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []model.KBSearchResult
+	for rows.Next() {
+		var r model.KBSearchResult
+		if err := rows.Scan(&r.ChunkID, &r.MaterialID, &r.MaterialTitle, &r.Content, &r.ChunkIndex, &r.Score); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// RRFuse is the public version of rrfFuse, exposed so the service layer
+// can fuse vector + BM25 hits without leaking the un-exported helper.
+// See rrfFuse for the implementation details.
+func (s *Store) RRFuse(vecHits, bmHits []model.KBSearchResult, topK int) []model.KBSearchResult {
+	return rrfFuse(vecHits, bmHits, topK)
+}
+func rrfFuse(vecHits, bmHits []model.KBSearchResult, topK int) []model.KBSearchResult {
+	const k = 60.0
+	scores := make(map[uuid.UUID]float64, len(vecHits)+len(bmHits))
+	order := make([]uuid.UUID, 0, len(vecHits)+len(bmHits))
+	seen := make(map[uuid.UUID]bool, len(vecHits)+len(bmHits))
+	byID := make(map[uuid.UUID]model.KBSearchResult, len(vecHits)+len(bmHits))
+
+	add := func(hits []model.KBSearchResult) {
+		for rank, h := range hits {
+			if !seen[h.ChunkID] {
+				seen[h.ChunkID] = true
+				order = append(order, h.ChunkID)
+				byID[h.ChunkID] = h
+			}
+			scores[h.ChunkID] += 1.0 / (k + float64(rank+1))
+		}
+	}
+	add(vecHits)
+	add(bmHits)
+
+	// Sort by descending fused score, then by first-seen order (stable).
+	type scored struct {
+		id     uuid.UUID
+		firstOrder int
+		score  float64
+	}
+	firstSeen := make(map[uuid.UUID]int, len(order))
+	for i, id := range order {
+		firstSeen[id] = i
+	}
+	scoredList := make([]scored, 0, len(order))
+	for id, s := range scores {
+		scoredList = append(scoredList, scored{id: id, firstOrder: firstSeen[id], score: s})
+	}
+	sort.SliceStable(scoredList, func(i, j int) bool {
+		if scoredList[i].score != scoredList[j].score {
+			return scoredList[i].score > scoredList[j].score
+		}
+		return scoredList[i].firstOrder < scoredList[j].firstOrder
+	})
+
+	if topK > 0 && len(scoredList) > topK {
+		scoredList = scoredList[:topK]
+	}
+
+	out := make([]model.KBSearchResult, 0, len(scoredList))
+	for _, s := range scoredList {
+		h := byID[s.id]
+		// Replace the per-list score with the fused one so the client
+		// sees the ranking signal that produced this ordering.
+		h.Score = s.score
+		out = append(out, h)
+	}
+	return out
+}
 // SearchChunks performs vector similarity search.
 //
 // How the []float32 -> vector(1536) wire transition works:
@@ -274,8 +400,15 @@ func (s *Store) CreateChunk(ctx context.Context, c *model.KBChunk) error {
 // short version is that pgvector.Vector implements driver.Valuer and (if
 // the connection was registered via New) pgtype.Codec, so pgx can encode
 // it as a Postgres vector(1536) instead of a float8[].
+//
+// c.Metadata defaults to '{}' when nil so the call site does not have to
+// remember to set it — the column is NOT NULL DEFAULT '{}' in the schema
+// but pgx sends a typed nil and the server rejects it.
 func (s *Store) CreateChunkWithVec(ctx context.Context, c *model.KBChunk, vec []float32) error {
 	c.ID = uuid.New()
+	if len(c.Metadata) == 0 {
+		c.Metadata = json.RawMessage(`{}`)
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO kb_chunks (id, material_id, tenant_id, content, chunk_index, char_start, char_end, source_location, hit_count, used_count, metadata, content_vec)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)

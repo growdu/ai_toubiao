@@ -53,17 +53,37 @@ type KBSearchResult struct {
 	ChunkIndex    int       `json:"chunk_index"`
 }
 
+// SearchMode tells the store how to rank results. "vector" is the original
+// cosine-similarity path (default). "bm25" runs a tsvector full-text search
+// using the `simple` config — it scores higher on exact-token recall
+// (standard numbers, model names, supplier codes). "hybrid" runs both and
+// fuses them with Reciprocal Rank Fusion (RRF).
+type SearchMode string
+
+const (
+	SearchModeVector  SearchMode = "vector"
+	SearchModeBM25    SearchMode = "bm25"
+	SearchModeHybrid  SearchMode = "hybrid"
+)
+
 // SearchRequest is the search API request.
 type SearchRequest struct {
-	Query    string `json:"query" validate:"required,min=1"`
-	TopK     int    `json:"top_k" validate:"omitempty,gt=0,lte=50"`
-	Category string `json:"category,omitempty"`
+	Query    string     `json:"query" validate:"required,min=1"`
+	TopK     int        `json:"top_k" validate:"omitempty,gt=0,lte=50"`
+	Category string     `json:"category,omitempty"`
+	// Mode selects the ranking algorithm. Empty defaults to SearchModeVector
+	// for backward compatibility; callers that want hybrid should set it
+	// explicitly. Validation lives in the service layer.
+	Mode     SearchMode `json:"mode,omitempty"`
 }
 
 // SearchResponse is the search API response.
 type SearchResponse struct {
 	Hits  []KBSearchResult `json:"hits"`
 	Total int              `json:"total"`
+	// Mode echoes what actually ran, so callers can confirm their request
+	// was honored (helpful when an embedding call fails and we degrade).
+	Mode SearchMode `json:"mode"`
 }
 
 // CreateMaterialRequest is the request to create a KB material.

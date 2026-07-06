@@ -95,34 +95,89 @@ func (s *KBService) DeleteMaterial(ctx context.Context, id uuid.UUID) error {
 	return s.store.DeleteMaterial(ctx, id)
 }
 
-// Search performs semantic search across knowledge base.
+// Search performs semantic and/or keyword search across the knowledge base.
+//
+// Mode dispatch:
+//   - vector (default): embed query → pgvector cosine similarity.
+//   - bm25: tsvector @@ plainto_tsquery against the trigger-maintained column.
+//   - hybrid: run both at topK * 3 (over-fetch so RRF has room to merge)
+//     and fuse with Reciprocal Rank Fusion. The vector call is the
+//     expensive one (embedding + remote LLM); on its failure we degrade
+//     to BM25-only with a warning, rather than returning an error.
 func (s *KBService) Search(ctx context.Context, tenantID uuid.UUID, req *model.SearchRequest) (*model.SearchResponse, error) {
 	if req.TopK <= 0 {
 		req.TopK = 10
 	}
-
-	// 1. Get query embedding from router-svc.
-	embResp, err := s.routerClient.Embed(ctx, tenantID, []string{req.Query}, "text-embedding-3-small")
-	if err != nil {
-		s.log.Warn("embed call failed, returning empty results", slog.Any("error", err))
-		return &model.SearchResponse{Hits: []model.KBSearchResult{}, Total: 0}, nil
-	}
-	if len(embResp.Embeddings) == 0 {
-		return &model.SearchResponse{Hits: []model.KBSearchResult{}, Total: 0}, nil
+	mode := req.Mode
+	if mode == "" {
+		mode = model.SearchModeVector
 	}
 
-	queryEmbedding := embResp.Embeddings[0]
+	switch mode {
+	case model.SearchModeBM25:
+		hits, err := s.store.SearchChunksBM25(ctx, tenantID, req.Query, req.TopK, req.Category)
+		if err != nil {
+			return nil, err
+		}
+		return &model.SearchResponse{Hits: hits, Total: len(hits), Mode: mode}, nil
 
-	// 2. Vector search in pgvector.
-	hits, err := s.store.SearchChunks(ctx, tenantID, queryEmbedding, req.TopK, req.Category)
-	if err != nil {
-		return nil, err
+	case model.SearchModeHybrid:
+		// Over-fetch each side so RRF has enough candidates. 3x topK
+		// is the empirical sweet spot from Cormack's paper — too small
+		// and the BM25 hits that the vector search missed get truncated
+		// before they can re-enter the merged list.
+		fetch := req.TopK * 3
+		if fetch > 50 {
+			fetch = 50
+		}
+		var bmHits []model.KBSearchResult
+		bmHits, err := s.store.SearchChunksBM25(ctx, tenantID, req.Query, fetch, req.Category)
+		if err != nil {
+			// BM25 is cheap; if even that fails we should not silently
+			// fall back. Return the error and let the caller decide.
+			return nil, err
+		}
+
+		embResp, embErr := s.routerClient.Embed(ctx, tenantID, []string{req.Query}, "text-embedding-3-small")
+		if embErr != nil {
+			s.log.Warn("hybrid: embed call failed, degrading to bm25",
+				slog.Any("error", embErr))
+			return &model.SearchResponse{Hits: bmHits[:min(len(bmHits), req.TopK)], Total: len(bmHits), Mode: model.SearchModeBM25}, nil
+		}
+		if len(embResp.Embeddings) == 0 {
+			return &model.SearchResponse{Hits: bmHits[:min(len(bmHits), req.TopK)], Total: len(bmHits), Mode: model.SearchModeBM25}, nil
+		}
+		vecHits, err := s.store.SearchChunks(ctx, tenantID, embResp.Embeddings[0], fetch, req.Category)
+		if err != nil {
+			return nil, err
+		}
+		merged := s.store.RRFuse(vecHits, bmHits, req.TopK)
+		return &model.SearchResponse{Hits: merged, Total: len(merged), Mode: model.SearchModeHybrid}, nil
+
+	case model.SearchModeVector:
+		fallthrough
+	default:
+		embResp, err := s.routerClient.Embed(ctx, tenantID, []string{req.Query}, "text-embedding-3-small")
+		if err != nil {
+			s.log.Warn("embed call failed, returning empty results", slog.Any("error", err))
+			return &model.SearchResponse{Hits: []model.KBSearchResult{}, Total: 0, Mode: model.SearchModeVector}, nil
+		}
+		if len(embResp.Embeddings) == 0 {
+			return &model.SearchResponse{Hits: []model.KBSearchResult{}, Total: 0, Mode: model.SearchModeVector}, nil
+		}
+		hits, err := s.store.SearchChunks(ctx, tenantID, embResp.Embeddings[0], req.TopK, req.Category)
+		if err != nil {
+			return nil, err
+		}
+		return &model.SearchResponse{Hits: hits, Total: len(hits), Mode: model.SearchModeVector}, nil
 	}
+}
 
-	return &model.SearchResponse{
-		Hits:  hits,
-		Total: len(hits),
-	}, nil
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // chunkContent splits text into chunks of approximately maxTokens tokens.

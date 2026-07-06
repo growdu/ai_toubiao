@@ -13,7 +13,11 @@
 //   /api/v1/projects/*              -> project-svc
 //   /api/v1/documents/*             -> document-svc
 //   /api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
-//   /api/v1/knowledge/*             -> knowledge-svc
+//   /api/v1/kb/*                    -> knowledge-svc
+// Note: the public prefix is /api/v1/kb/* (not /api/v1/knowledge/*)
+// because knowledge-svc mounts its handlers under /api/v1/kb/* internally
+// and api-gateway forwards the path unchanged. Using a matching public
+// prefix keeps the path consistent end-to-end and avoids a rewrite seam.
 package main
 
 import (
@@ -102,8 +106,8 @@ func run() error {
 	r.Handle("/api/v1/documents/*", proxyWithAuth)
 	r.Handle("/api/v1/bids", proxyWithAuth)
 	r.Handle("/api/v1/bids/*", proxyWithAuth)
-	r.Handle("/api/v1/knowledge", proxyWithAuth)
-	r.Handle("/api/v1/knowledge/*", proxyWithAuth)
+	r.Handle("/api/v1/kb", proxyWithAuth)
+	r.Handle("/api/v1/kb/*", proxyWithAuth)
 	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 	})
@@ -244,7 +248,7 @@ func buildRoutes(cfg *config.Config) ([]proxy.Route, error) {
 		{Prefix: "/api/v1/projects", Upstream: projectURL},
 		{Prefix: "/api/v1/documents", Upstream: documentURL},
 		{Prefix: "/api/v1/bids", Upstream: workflowURL},
-		{Prefix: "/api/v1/knowledge", Upstream: knowledgeURL},
+		{Prefix: "/api/v1/kb", Upstream: knowledgeURL},
 	}, nil
 }
 

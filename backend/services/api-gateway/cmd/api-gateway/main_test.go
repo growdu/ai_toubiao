@@ -47,8 +47,8 @@ func TestBuildRoutes_IncludesKnowledgeRoute(t *testing.T) {
 		t.Fatalf("buildRoutes: %v", err)
 	}
 
-	if !hasPrefix(got, "/api/v1/knowledge", "http://knowledge:8084") {
-		t.Errorf("routes missing /api/v1/knowledge -> http://knowledge:8084, got: %+v", got)
+	if !hasPrefix(got, "/api/v1/kb", "http://knowledge:8084") {
+		t.Errorf("routes missing /api/v1/kb -> http://knowledge:8084, got: %+v", got)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestBuildRoutes_IncludesAllExpectedPrefixes(t *testing.T) {
 		{"/api/v1/projects", "http://project:8081"},
 		{"/api/v1/documents", "http://document:8082"},
 		{"/api/v1/bids", "http://workflow:8083"},
-		{"/api/v1/knowledge", "http://knowledge:8084"},
+		{"/api/v1/kb", "http://knowledge:8084"},
 	}
 	for _, e := range expected {
 		if !hasPrefix(got, e.prefix, e.upstream) {
