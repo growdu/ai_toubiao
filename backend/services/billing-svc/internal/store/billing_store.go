@@ -143,3 +143,39 @@ func (s *Store) GetBudget(ctx context.Context, month string) (*model.Budget, err
 	}
 	return &b, err
 }
+
+
+// UpdateTenantPlan sets the tenant's plan column (free/pro/enterprise).
+// The CHECK constraint on tenants.plan guarantees we can only insert
+// one of the three known tiers, so a bad value here errors out at the
+// DB level rather than corrupting data.
+func (s *Store) UpdateTenantPlan(ctx context.Context, plan string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE tenants SET plan = $1, updated_at = NOW() WHERE id = $2`,
+		plan, mustTenantID(ctx),
+	)
+	return err
+}
+
+// GetTenantPlan returns the current plan of the tenant in context.
+func (s *Store) GetTenantPlan(ctx context.Context) (string, error) {
+	var plan string
+	err := s.pool.QueryRow(ctx,
+		`SELECT plan FROM tenants WHERE id = $1`,
+		mustTenantID(ctx),
+	).Scan(&plan)
+	return plan, err
+}
+
+// mustTenantID pulls the tenant id from context and panics if missing —
+// all billing handlers are auth-gated so the context must carry a tenant.
+func mustTenantID(ctx context.Context) uuid.UUID {
+	tid, err := tenant.FromContext(ctx)
+	if err != nil {
+		// Should be unreachable thanks to auth middleware, but if it
+		// does happen we'd rather know than silently corrupt rows.
+		panic("billing: tenant missing from context: " + err.Error())
+	}
+	id, _ := uuid.Parse(tid)
+	return id
+}

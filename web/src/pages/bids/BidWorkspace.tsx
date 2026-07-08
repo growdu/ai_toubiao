@@ -335,21 +335,26 @@ export default function BidWorkspace() {
     onError: (err: any) => toast.error('保存失败', err?.response?.data?.message),
   })
   const generateMutation = useMutation({
-    mutationFn: (chapterId: string) => bidsApi.generateChapter(id!, chapterId),
-    onSuccess: () => {
+    mutationFn: ({ chapterId, prompt }: { chapterId: string; prompt?: string }) =>
+      bidsApi.generateChapter(id!, chapterId, prompt),
+    onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['outline', id] })
       queryClient.invalidateQueries({ queryKey: ['bid', id] })
       queryClient.invalidateQueries({ queryKey: ['chapter-content', id, selectedChapterId] })
-      toast.info('生成任务已提交', 'AI 正在编写内容…')
+      const withPrompt = vars.prompt && vars.prompt.trim().length > 0
+      toast.info(
+        withPrompt ? '已带提示词提交' : '生成任务已提交',
+        withPrompt ? `AI 正在按提示词编写（共 ${vars.prompt!.trim().length} 字）…` : 'AI 正在编写内容…',
+      )
     },
-    onError: (err: any, chapterId) => {
+    onError: (err: any, vars) => {
       // Surface the failure with a one-click retry CTA. The chapter id
-      // is captured via the onError second arg so the retry knows
-      // exactly which chapter to re-submit.
+      // and the original prompt (if any) are captured via the onError
+      // second arg so the retry re-submits with identical parameters.
       const description = err?.response?.data?.message || err?.response?.data?.error?.message
       toast.error('提交失败', description, {
         label: '重试此章节',
-        onClick: () => generateMutation.mutate(chapterId),
+        onClick: () => generateMutation.mutate({ chapterId: vars.chapterId, prompt: vars.prompt }),
       })
     },
   })
@@ -358,11 +363,14 @@ export default function BidWorkspace() {
   // failed because the LLM hit rate limits / connection dropped". Walking
   // through each one to click retry is friction; this fires all failed
   // chapters in parallel so the workflow catches up in one round-trip.
+  // Per-chapter CustomPrompts (from ChapterInspector prompt tab) are
+  // intentionally NOT retried — the batch path has no prompt context.
   const retryAllFailedMutation = useMutation({
     mutationFn: async () => {
       const failed = chapters.filter(c => c.status === 'failed')
       if (failed.length === 0) return { submitted: 0 }
-      await Promise.allSettled(failed.map(c => bidsApi.generateChapter(id!, c.id)))
+      await Promise.allSettled(failed.map(c =>
+        generateMutation.mutateAsync({ chapterId: c.id })))
       return { submitted: failed.length }
     },
     onSuccess: ({ submitted }) => {

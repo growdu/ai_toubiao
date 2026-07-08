@@ -7,19 +7,24 @@ export const CHAPTER_STATUS_LABELS: Record<string, string> = {
 
 export const BID_STATUS_LABELS: Record<string, string> = {
   pending: '等待中', parsing: '解析中', outlining: '生成大纲',
-  generating: '生成内容', auditing: '审计中', exporting: '导出中',
+  generating: '生成内容', awaiting_review: '等待审核',
+  auditing: '审计中', exporting: '导出中',
   done: '已完成', failed: '失败', paused: '已暂停', facts: '审查中',
 }
 
-// 工作流阶段顺序（用于顶栏 stepper）
+// 工作流阶段顺序（用于顶栏 stepper）。在生成内容之后、审计之前加
+// 一个 "awaiting_review" 暂停点：让用户先人眼检查初稿质量，
+// 不通过审核就不进入审计阶段。这是"人在回路 (HIL)"原则的实际落地 —
+// 自动流程不应在用户没看过内容的情况下进入下一步。
 export const WORKFLOW_STEPS: { id: string; label: string }[] = [
-  { id: 'pending',   label: '初始化' },
-  { id: 'parsing',   label: '解析材料' },
-  { id: 'outlining', label: '生成大纲' },
-  { id: 'facts',     label: '证据检索' },
-  { id: 'generating',label: '生成内容' },
-  { id: 'auditing',  label: '审计' },
-  { id: 'done',      label: '完成' },
+  { id: 'pending',          label: '初始化' },
+  { id: 'parsing',          label: '解析材料' },
+  { id: 'outlining',        label: '生成大纲' },
+  { id: 'facts',            label: '证据检索' },
+  { id: 'generating',       label: '生成内容' },
+  { id: 'awaiting_review',  label: '等待审核' },
+  { id: 'auditing',         label: '审计' },
+  { id: 'done',             label: '完成' },
 ]
 
 export function workflowStepIndex(status: string): number {

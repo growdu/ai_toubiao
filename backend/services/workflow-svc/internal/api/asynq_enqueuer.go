@@ -77,9 +77,11 @@ func (e *AsynqEnqueuer) EnqueueChaptersForBid(ctx context.Context, workflowID, b
 	return workers.EnqueueChapters(ctx, e.client, chapters)
 }
 
-// EnqueueChapter dispatches a content-generation task for a single chapter.
-func (e *AsynqEnqueuer) EnqueueChapter(ctx context.Context, workflowID, bidJobID, tenantID, chapterID uuid.UUID, chapterTitle string) error {
-	return workers.EnqueueChapter(ctx, e.client, workflowID, bidJobID, tenantID, chapterID, chapterTitle)
+// EnqueueChapter dispatches a content-generation task for a single
+// chapter. customPrompt is forwarded to the worker and appended to the
+// LLM user message; empty string is the no-op "no prompt" behavior.
+func (e *AsynqEnqueuer) EnqueueChapter(ctx context.Context, workflowID, bidJobID, tenantID, chapterID uuid.UUID, chapterTitle, customPrompt string) error {
+	return workers.EnqueueChapter(ctx, e.client, workflowID, bidJobID, tenantID, chapterID, chapterTitle, customPrompt)
 }
 
 // EnqueueAudit dispatches the compliance-audit task.

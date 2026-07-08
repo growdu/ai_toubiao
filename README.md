@@ -123,7 +123,8 @@ ai_toubiao/
 │   │   ├── audit-svc/       # 合规审查
 │   │   ├── template-svc/     # Word 模板管理
 │   │   ├── billing-svc/      # 账单与预算
-│   │   └── notify-svc/       # 通知服务
+│   │   ├── notify-svc/       # 通知服务
+│   │   └── doc-gen/          # 文档生成内核（CLI + HTTP 服务）
 │   ├── shared/               # 共享包（db、logger、tenant、httperr）
 │   └── migrations/          # 数据库迁移（goose）
 ├── web/                      # React 前端
@@ -144,7 +145,7 @@ ai_toubiao/
 
 | 服务 | 状态 | 说明 |
 |------|------|------|
-| api-gateway | 完整 | JWT 认证、限流、路由代理（含知识库代理） |
+| api-gateway | 完整 | JWT 认证、限流、路由代理（9 个上游服务全接入） |
 | project-svc | 完整 | Project CRUD、多租户隔离 |
 | router-svc | 完整 | AI Provider 路由、LRU 缓存 |
 | workflow-svc | 完整 | 状态机、事件溯源、Asynq 队列、MinIO 大文件 |
@@ -154,6 +155,7 @@ ai_toubiao/
 | template-svc | 完整 | Word 模板 CRUD、MinIO 后端 |
 | billing-svc | 完整 | 预算管理、交易记录 |
 | notify-svc | 完整 | 多渠道通知偏好 |
+| doc-gen | 完整 | 标书生成内核（摄取/分析/规划/生成/图表/审计/组装/学习），CLI + HTTP |
 
 ## 数据库迁移
 
@@ -179,6 +181,11 @@ ai_toubiao/
 | `POST/GET /api/v1/templates` | 模板管理 |
 | `GET/POST /api/v1/billing/budget` | 预算管理 |
 | `POST /api/v1/notifications/send` | 发送通知 |
+| `POST /api/v1/docgen/generate` | 标书生成（异步任务） |
+| `GET /api/v1/docgen/tasks/:id` | 生成任务状态 |
+| `POST /api/v1/docgen/assemble` | 重新组装标书文档 |
+| `POST /api/v1/billing/checkout` | 升级套餐 |
+| `GET /api/v1/billing/plan` | 当前套餐 |
 
 ## 文档索引
 
@@ -205,9 +212,9 @@ ai_toubiao/
 | Markdown 风格 | markdownlint-cli2 | 严格 |
 | Mermaid 块渲染 | mermaid.js + Chrome | 严格 |
 
-## 部署（单容器 10 服务）
+## 部署（单容器 11 服务）
 
-把 10 个 Go 服务 + 共享前端打到一台机器上跑：
+把 11 个 Go 服务 + 共享前端打到一台机器上跑：
 
 ```bash
 cd backend
@@ -215,10 +222,10 @@ cd backend
 # 1. 启基础设施（PG + MinIO + Redis）
 docker compose -f docker-compose.yml up -d
 
-# 2. 编译 10 个 Go 服务（用 docker golang:1.25-alpine 因为主机没 Go）
+# 2. 编译 11 个 Go 服务（用 docker golang:1.25-alpine 因为主机没 Go）
 ./scripts/build-services.sh
 
-# 3. 单容器跑 10 服务（api-gateway:7080 对外暴露）
+# 3. 单容器跑 11 服务（api-gateway:7080 对外暴露）
 ./scripts/start-stack.sh start
 
 # 4. 部署前端（dist + nginx:alpine）
@@ -302,8 +309,8 @@ Private · 仅供内部使用
 
 | 类别 | 数量 | 说明 |
 |---|---|---|
-| 后端 Test 函数 | 365 | 49 个 `_test.go`，11 个服务 + shared，含 5 个真实 PG/MinIO 集成测试 |
-| 前端 vitest | ~90 | 8 个 `*.test.{ts,tsx}`（LoginPage、Layout、auth、bids、toast、useHotkey、theme、CommandPalette） |
+| 后端 Test 函数 | 423 | 59 个 `_test.go`，12 个服务 + shared，含 5 个真实 PG/MinIO 集成测试 |
+| 前端 vitest | 38 | 8 个 `*.test.{ts,tsx}`（LoginPage、Layout、auth、bids、toast、useHotkey、theme、CommandPalette），全绿 |
 
 性能基准 (Go `testing.B`):
 

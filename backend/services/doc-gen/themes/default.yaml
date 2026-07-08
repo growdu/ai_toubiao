@@ -1,0 +1,25 @@
+# 默认主题 - 企业蓝调
+name: default
+palette:
+  - "#1F4E79"
+  - "#2E75B6"
+  - "#9DC3E6"
+  - "#A9D18E"
+  - "#FFC000"
+font:
+  family: "微软雅黑"
+  size_pt: 10
+chart:
+  dpi: 300
+  grid_style: "dashed"
+  figure_size: [10, 5.6]
+  width_px: 1600
+mermaid:
+  theme: "default"
+  theme_variables:
+    fontSize: "14px"
+    primaryColor: "#1F4E79"
+table:
+  header_fill: "1F4E79"
+  header_font_color: "FFFFFF"
+  zebra: true

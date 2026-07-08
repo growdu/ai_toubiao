@@ -96,6 +96,103 @@
     );
     background-size: 200% 100%;
   }
+
+  /* 渐变流动背景（用于 CTA/Hero） */
+  .bg-gradient-animated {
+    background: linear-gradient(120deg, #224be0, #3567f6, #5b8bff, #3567f6, #224be0);
+    background-size: 200% 200%;
+    animation: gradientX 8s ease infinite;
+  }
+
+  /* 玻璃态（强） */
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: saturate(180%) blur(16px) brightness(1.05);
+    -webkit-backdrop-filter: saturate(180%) blur(16px) brightness(1.05);
+  }
+  .dark .glass-strong {
+    background: rgba(16, 20, 42, 0.78);
+  }
+
+  /* 文字渐变高亮（用于主标题） */
+  .text-gradient {
+    background: linear-gradient(135deg, #3567f6 0%, #8eb4ff 50%, #224be0 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .text-gradient-dark {
+    background: linear-gradient(135deg, #8eb4ff 0%, #c5d8ff 50%, #ffffff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* 网格背景 */
+  .bg-grid-soft {
+    background-image:
+      linear-gradient(rgba(16, 20, 42, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(16, 20, 42, 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .bg-grid-fine {
+    background-image:
+      linear-gradient(rgba(16, 20, 42, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(16, 20, 42, 0.04) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+  .dark .bg-grid-soft {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  }
+  .dark .bg-grid-fine {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  }
+
+  /* 拖拽区 */
+  .dropzone {
+    background-image: repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 8px,
+      rgba(34, 75, 224, 0.04) 8px,
+      rgba(34, 75, 224, 0.04) 16px
+    );
+  }
+  .dropzone-active {
+    background-image: repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 8px,
+      rgba(34, 75, 224, 0.12) 8px,
+      rgba(34, 75, 224, 0.12) 16px
+    );
+    border-color: #5b8bff;
+  }
+
+  /* 隐藏滚动条但保留滚动 */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 文字超出省略 1 行/2 行/3 行 */
+  .truncate-1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .truncate-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 }
 
 /* -----------------------------------------------------------------------------
@@ -202,4 +299,134 @@
   .progress-track { @apply w-full bg-ink-100 rounded-full overflow-hidden; }
   .dark .progress-track { @apply bg-ink-700; }
   .progress-bar   { @apply h-full bg-gradient-to-r from-brand-500 to-brand-600 rounded-full transition-all duration-500; }
+  .progress-bar-shimmer::after {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent;
+    animation: shimmer 1.8s linear infinite;
+  }
+
+  /* 圆环进度（SVG 容器统一宽度） */
+  .ring-progress { transform: rotate(-90deg); }
+
+  /* 悬浮可点击卡片 */
+  .card-interactive {
+    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-brand-200 cursor-pointer;
+  }
+
+  /* 标签章 chip */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium;
+  }
+
+  /* 顶部分隔的圆形 icon 框 */
+  .icon-frame {
+    @apply inline-flex items-center justify-center rounded-xl;
+  }
+
+  /* 焦点环样式（用于导航项/侧边栏按钮） */
+  .focus-ring-brand {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+  }
+  .dark .focus-ring-brand {
+    @apply focus-visible:ring-offset-ink-900;
+  }
+
+  /* Tab 样式 */
+  .tab {
+    @apply inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg text-ink-500 hover:text-ink-800 hover:bg-ink-100 transition-colors cursor-pointer;
+  }
+  .dark .tab {
+    @apply text-ink-400 hover:text-ink-100 hover:bg-ink-800;
+  }
+  .tab-active {
+    @apply bg-brand-50 text-brand-700;
+  }
+  .dark .tab-active {
+    @apply bg-brand-900 text-brand-200;
+  }
+
+  /* 区域 hero 卡片背景 */
+  .section-feature {
+    @apply absolute inset-0 pointer-events-none;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * Markdown preview styles (used by ChapterEditor preview pane + read-only view)
+ * Lightweight replacement for tailwindcss-typography. Targets the
+ * `.md-preview` class which wraps the sanitized HTML emitted by `marked`.
+ * ---------------------------------------------------------------------------*/
+@layer components {
+  .md-preview {
+    font-size: 0.9375rem;
+  }
+  .md-preview > * + * {
+    margin-top: 0.75rem;
+  }
+  .md-preview h1 {
+    @apply text-2xl font-bold text-ink-900 dark:text-white mt-6 mb-2 pb-2 border-b border-ink-200 dark:border-ink-700;
+  }
+  .md-preview h2 {
+    @apply text-xl font-bold text-ink-900 dark:text-white mt-5 mb-2;
+  }
+  .md-preview h3 {
+    @apply text-lg font-semibold text-ink-800 dark:text-ink-100 mt-4 mb-1.5;
+  }
+  .md-preview h4 {
+    @apply text-base font-semibold text-ink-800 dark:text-ink-100 mt-3 mb-1;
+  }
+  .md-preview h5,
+  .md-preview h6 {
+    @apply text-sm font-semibold text-ink-700 dark:text-ink-200 uppercase tracking-wide mt-3 mb-1;
+  }
+  .md-preview p {
+    @apply leading-7 text-ink-700 dark:text-ink-300;
+  }
+  .md-preview strong {
+    @apply font-semibold text-ink-900 dark:text-white;
+  }
+  .md-preview em {
+    @apply italic;
+  }
+  .md-preview a {
+    @apply text-brand-600 dark:text-brand-400 underline decoration-brand-300 dark:decoration-brand-700 underline-offset-2 hover:decoration-brand-500;
+  }
+  .md-preview ul,
+  .md-preview ol {
+    @apply pl-6 text-ink-700 dark:text-ink-300;
+  }
+  .md-preview ul {
+    list-style-type: disc;
+  }
+  .md-preview ol {
+    list-style-type: decimal;
+  }
+  .md-preview li + li {
+    margin-top: 0.25rem;
+  }
+  .md-preview code {
+    @apply px-1.5 py-0.5 rounded bg-ink-100 dark:bg-ink-800 text-pink-600 dark:text-pink-400 font-mono text-[0.85em];
+  }
+  .md-preview pre {
+    @apply p-4 rounded-xl bg-ink-900 dark:bg-ink-900 text-ink-100 overflow-x-auto scrollbar-thin text-sm leading-6;
+  }
+  .md-preview pre code {
+    @apply p-0 bg-transparent text-ink-100;
+  }
+  .md-preview blockquote {
+    @apply pl-4 border-l-4 border-ink-200 dark:border-ink-700 text-ink-600 dark:text-ink-400 italic;
+  }
+  .md-preview hr {
+    @apply my-6 border-0 h-px bg-ink-200 dark:bg-ink-700;
+  }
+  .md-preview table {
+    @apply w-full text-sm border-collapse;
+  }
+  .md-preview th,
+  .md-preview td {
+    @apply px-3 py-2 border border-ink-200 dark:border-ink-700 text-left;
+  }
+  .md-preview th {
+    @apply bg-ink-50 dark:bg-ink-800 font-semibold text-ink-900 dark:text-white;
+  }
 }

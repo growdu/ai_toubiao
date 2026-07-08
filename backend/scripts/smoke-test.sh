@@ -55,7 +55,7 @@ echo "[1] auth.login"
 TENANT=11111111-1111-1111-1111-111111111111
 code=$(http_status -X POST "$GATEWAY/api/v1/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"tenant_slug":"demo-a","email":"admin@demo-a.test","password":"admin123"}')
+  -d '{"tenant_slug":"demo-a","email":"admin@demo-a.test","password":"password123"}')
 assert_eq "login returns 200" 200 "$code"
 TOKEN=$(http_body | jq -r '.access_token // .data.token // .token // empty')
 if [ -z "$TOKEN" ]; then
@@ -142,22 +142,40 @@ else
 fi
 echo
 
-# ---- 9. router-svc (mock provider) ----
-echo "[9] router-svc (direct, mock provider)"
-ROUTER="${ROUTER:-http://localhost:8085}"
-code=$(curl -s -o /tmp/smoke-body -w '%{http_code}' -X POST "$ROUTER/api/v1/router/chat" \
+# ---- 9. end-to-end KB round-trip (hybrid retrieval) ----
+# This exercises the new /api/v1/kb proxy: upload material → ingest
+# chunks → search (vector / BM25 / hybrid).
+echo "[9] knowledge-svc end-to-end (proxy through gateway)"
+KB_BODY=$(mktemp)
+kb_status() { curl -s -o "$KB_BODY" -w '%{http_code}' "$@"; }
+KB_PROSE="国密SM4算法实现 采用对称分组密码 128比特分组 256比特密钥"
+echo "  creating material"
+code=$(kb_status -X POST "$GATEWAY/api/v1/kb/materials" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "X-Tenant-Id: ${TENANT}" \
   -H "Content-Type: application/json" \
-  -d '{"task":"outline","tenant_id":"11111111-1111-1111-1111-111111111111","messages":[{"role":"user","content":"hi"}]}')
-if [ "$code" = "200" ]; then
-  echo "  $(green PASS) router chat 200"
-  PASS=$((PASS+1))
-  body=$(http_body | head -c 200)
-  echo "  response: $body"
-else
-  echo "  $(red FAIL) router chat status=$code"
-  FAIL=$((FAIL+1))
-  echo "  body: $(http_body | head -c 200)"
-fi
+  --data-binary @<(jq -n --arg t "$KB_PROSE" \
+    '{title:"smoke-kb",category:"case",content:$t}'))
+assert_eq "create kb material 201" 201 "$code"
+MAT_ID=$(jq -r '.data.id // .id // empty' < "$KB_BODY")
+echo "  material: $MAT_ID"
+echo "  ingest (chunks)"
+code=$(kb_status -X POST "$GATEWAY/api/v1/kb/ingest" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "X-Tenant-Id: ${TENANT}" \
+  -H "Content-Type: application/json" \
+  -d "{\"material_id\":\"${MAT_ID}\"}")
+assert_eq "ingest 200" 200 "$code"
+echo "  search hybrid"
+code=$(kb_status -X POST "$GATEWAY/api/v1/kb/search" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "X-Tenant-Id: ${TENANT}" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"SM4 对称分组","mode":"hybrid","top_k":3}')
+assert_eq "kb search 200" 200 "$code"
+hits=$(jq -r '.data // .chunks // [] | length' < "$KB_BODY")
+echo "  hybrid hits: $hits"
+rm -f "$KB_BODY"
 echo
 
 # ---- 10. CORS preflight ----

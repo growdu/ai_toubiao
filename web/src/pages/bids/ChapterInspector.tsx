@@ -8,7 +8,7 @@ interface ChapterInspectorProps {
   chapter: ChapterSpec
   content: ChapterContent | null
   bidStatus: string
-  onGenerate: () => void
+  onGenerate: (prompt?: string) => void
   onApprove?: () => void
   onReject?: () => void
   generating: boolean
@@ -19,6 +19,12 @@ interface ChapterInspectorProps {
 type InspectorTab = 'config' | 'prompt' | 'status'
 
 export function ChapterInspector({ chapter, content, bidStatus, onGenerate, onApprove, onReject, generating, approving, onUpdateChapter }: ChapterInspectorProps) {
+  // useState (not useRef) so the live character counter in the tab
+  // header can re-render as the user types. Persistence across tab
+  // switches comes from keeping prompt in component state without
+  // resetting it in the chapter.id effect — that effect only resets
+  // when the user *switches chapters*, which is the correct moment
+  // (a new chapter shouldn't inherit the previous chapter's prompt).
   const [prompt, setPrompt] = useState('')
   const [tab, setTab] = useState<InspectorTab>('config')
 
@@ -305,18 +311,27 @@ export function ChapterInspector({ chapter, content, bidStatus, onGenerate, onAp
         )}
 
         {/* Generate / regenerate — only show when not in awaiting_review,
-            since at that point the user is reviewing, not generating. */}
+            since at that point the user is reviewing, not generating.
+            The onGenerate handler accepts an optional prompt; we pass
+            the current prompt-tab text if any. Trimmed empties become
+            undefined so the backend's "no custom prompt" branch fires. */}
         {chapter.status !== 'approved' && (
           <Button
             variant="primary"
             className="w-full"
             disabled={!canGenerate || generating}
             loading={generating}
-            onClick={onGenerate}
+            onClick={() => {
+              const trimmed = prompt.trim()
+              onGenerate(trimmed ? trimmed : undefined)
+            }}
           >
             {chapter.status === 'succeeded' ? '🔄 重新生成' :
              chapter.status === 'failed' ? '🔄 重试生成' :
              '⚡ 生成此章节'}
+            {prompt.trim() && (
+              <span className="ml-1 text-[10px] font-normal opacity-80">（含提示词）</span>
+            )}
           </Button>
         )}
         {!canGenerate && chapter.status !== 'approved' && (

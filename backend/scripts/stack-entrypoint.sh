@@ -2,7 +2,7 @@
 # stack-entrypoint.sh — supervisor inside the bidwriter-stack container.
 #
 # This script runs as PID 1 of the bidwriter-stack container. It brings
-# up all 10 Go services in dependency order, captures their stdout/stderr
+# up all 11 Go services in dependency order, captures their stdout/stderr
 # to per-service log files, and traps SIGTERM so docker stop can shut
 # the whole stack down cleanly.
 #
@@ -26,7 +26,7 @@ mkdir -p "$LOG_DIR" "$PID_DIR"
 # Port plan. Must stay in sync with start-stack.sh.
 # (api-gateway is :7080 instead of the default :8080 to avoid clashing
 #  with code-server / ai-teacher / other localhost consumers.)
-PORTS="api-gateway:7080 project-svc:7081 document-svc:7082 workflow-svc:7083 router-svc:7085 knowledge-svc:7086 audit-svc:7095 template-svc:7096 billing-svc:7097 notify-svc:7098"
+PORTS="api-gateway:7080 project-svc:7081 document-svc:7082 workflow-svc:7083 router-svc:7085 knowledge-svc:7086 audit-svc:7095 template-svc:7096 billing-svc:7097 notify-svc:7098 docgen-svc:7099"
 
 start_one() {
   svc="$1"; port="$2"; bin="/bins/$svc"
@@ -102,10 +102,11 @@ export AUDIT_SVC_URL="http://127.0.0.1:7095"
 export TEMPLATE_SVC_URL="http://127.0.0.1:7096"
 export BILLING_SVC_URL="http://127.0.0.1:7097"
 export NOTIFY_SVC_URL="http://127.0.0.1:7098"
+export DOCGEN_SVC_URL="http://127.0.0.1:7099"
 
 # Bring services up. Order matters only for api-gateway (last) because
 # it needs the upstream ports to be bound before its proxies can resolve.
-for entry in project-svc:7081 document-svc:7082 workflow-svc:7083 router-svc:7085 knowledge-svc:7086 audit-svc:7095 template-svc:7096 billing-svc:7097 notify-svc:7098; do
+for entry in project-svc:7081 document-svc:7082 workflow-svc:7083 router-svc:7085 knowledge-svc:7086 audit-svc:7095 template-svc:7096 billing-svc:7097 notify-svc:7098 docgen-svc:7099; do
   start_one "${entry%:*}" "${entry#*:}"
 done
 start_one api-gateway 7080

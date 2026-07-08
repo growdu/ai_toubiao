@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../../api/client'
 import { toast } from '../../lib/toast'
 import { usePageMeta } from '../../lib/usePageMeta'
 import {
   Button, Card, EmptyState, Modal, StatCard, StatusBadge,
-  TextArea, TextInput, Select, SkeletonCard,
+  TextArea, TextInput, Select, SkeletonCard, Tabs,
 } from '../../components/ui'
 
 interface KBMaterial {
@@ -72,6 +72,9 @@ export default function KnowledgePage() {
   const [form, setForm] = useState<CreateMaterialRequest>({ category: 'other', title: '', content: '' })
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState<string>('all')
+  const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [dragging, setDragging] = useState(false)
+  const dragCounter = useRef(0)
 
   const { data, isLoading } = useQuery({
     queryKey: ['kb-materials'],
@@ -110,14 +113,14 @@ export default function KnowledgePage() {
   }, [materials])
 
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-thin">
+    <div className="flex-1 overflow-y-auto scrollbar-thin bg-ink-50 dark:bg-ink-900">
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
         <div className="flex items-end justify-between mb-6 gap-4 animate-fade-in">
           <div>
-            <div className="text-xs font-medium uppercase tracking-wider text-brand-600 mb-1">资源中心</div>
-            <h1 className="text-2xl font-bold text-ink-900 tracking-tight">知识库</h1>
-            <p className="text-sm text-ink-500 mt-1">管理企业素材、案例、资质，作为标书编制的证据源</p>
+            <div className="text-xs font-medium uppercase tracking-wider text-brand-600 dark:text-brand-400 mb-1">资源中心</div>
+            <h1 className="text-2xl font-bold text-ink-900 dark:text-white tracking-tight">知识库</h1>
+            <p className="text-sm text-ink-500 dark:text-ink-400 mt-1">管理企业素材、案例、资质，作为标书编制的证据源</p>
           </div>
           <Button variant="primary" onClick={() => setShowUpload(true)} leftIcon={
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -158,18 +161,50 @@ export default function KnowledgePage() {
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-5">
-          <div className="flex-1 max-w-xs">
+          <div className="flex-1 max-w-xs relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </span>
             <TextInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索素材…"
+              className="pl-9"
             />
           </div>
-          <div className="flex items-center gap-1 p-1 bg-white rounded-xl border border-ink-100 shadow-soft overflow-x-auto scrollbar-none">
-            <CategoryPill active={catFilter === 'all'} onClick={() => setCatFilter('all')} label="全部分类" />
-            {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-              <CategoryPill key={k} active={catFilter === k} onClick={() => setCatFilter(k)} label={v} />
-            ))}
+          <div className="overflow-x-auto scrollbar-none">
+            <Tabs
+              variant="pill"
+              value={catFilter}
+              onChange={setCatFilter}
+              items={[
+                { id: 'all', label: '全部分类' },
+                ...Object.entries(CATEGORY_LABELS).map(([k, v]) => ({ id: k, label: v })),
+              ]}
+            />
+          </div>
+          <div className="flex items-center gap-0.5 p-1 bg-ink-100 dark:bg-ink-800 rounded-lg ml-auto">
+            <button
+              onClick={() => setView('grid')}
+              aria-label="网格视图"
+              className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-white dark:bg-ink-700 text-brand-600 dark:text-brand-300 shadow-sm' : 'text-ink-500 dark:text-ink-400 hover:text-ink-700 dark:hover:text-ink-200'}`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setView('list')}
+              aria-label="列表视图"
+              className={`p-1.5 rounded-md transition-colors ${view === 'list' ? 'bg-white dark:bg-ink-700 text-brand-600 dark:text-brand-300 shadow-sm' : 'text-ink-500 dark:text-ink-400 hover:text-ink-700 dark:hover:text-ink-200'}`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -197,9 +232,14 @@ export default function KnowledgePage() {
               icon="🔍"
               title="没有匹配的素材"
               description="尝试调整搜索关键词或切换分类"
+              action={
+                <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setCatFilter('all') }}>
+                  清除筛选
+                </Button>
+              }
             />
           </Card>
-        ) : (
+        ) : view === 'grid' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((m, idx) => (
               <Card
@@ -216,7 +256,7 @@ export default function KnowledgePage() {
                     {CATEGORY_ICONS[m.category] ?? '📄'}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold text-ink-900 truncate" title={m.title}>{m.title}</h3>
+                    <h3 className="font-semibold text-ink-900 dark:text-white truncate" title={m.title}>{m.title}</h3>
                     <span className={[
                       'inline-flex items-center text-[11px] px-1.5 py-0.5 rounded font-medium mt-1',
                       CATEGORY_COLORS[m.category] ?? CATEGORY_COLORS.other,
@@ -226,20 +266,59 @@ export default function KnowledgePage() {
                   </div>
                   <StatusBadge status={m.status} labels={STATUS_LABELS} showDot />
                 </div>
-                <div className="flex items-center justify-between text-xs text-ink-400 pt-3 border-t border-ink-100">
+                <div className="flex items-center justify-between text-xs text-ink-400 dark:text-ink-500 pt-3 border-t border-ink-100 dark:border-ink-700">
                   <span className="inline-flex items-center gap-1">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="8" y1="6" x2="21" y2="6" />
                       <line x1="8" y1="12" x2="21" y2="12" />
                       <line x1="8" y1="18" x2="21" y2="18" />
                     </svg>
-                    <strong className="text-ink-700 tabular-nums">{m.chunk_count}</strong> 片段
+                    <strong className="text-ink-700 dark:text-ink-300 tabular-nums">{m.chunk_count}</strong> 片段
                   </span>
                   <span>{new Date(m.created_at).toLocaleDateString('zh-CN')}</span>
                 </div>
               </Card>
             ))}
           </div>
+        ) : (
+          <Card padded={false} className="overflow-hidden">
+            <div className="divide-y divide-ink-100 dark:divide-ink-700">
+              {filtered.map((m, idx) => (
+                <div
+                  key={m.id}
+                  className="group flex items-center gap-3 px-4 py-3 hover:bg-ink-50 dark:hover:bg-ink-800/50 cursor-pointer transition-colors animate-slide-up"
+                  style={{ animationDelay: `${idx * 15}ms` }}
+                >
+                  <div className={[
+                    'shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base',
+                    CATEGORY_COLORS[m.category] ?? CATEGORY_COLORS.other,
+                  ].join(' ')}>
+                    {CATEGORY_ICONS[m.category] ?? '📄'}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-medium text-ink-900 dark:text-white truncate text-sm">{m.title}</h3>
+                      <span className={[
+                        'inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-medium',
+                        CATEGORY_COLORS[m.category] ?? CATEGORY_COLORS.other,
+                      ].join(' ')}>
+                        {CATEGORY_LABELS[m.category] ?? m.category}
+                      </span>
+                      <StatusBadge status={m.status} labels={STATUS_LABELS} showDot={false} />
+                    </div>
+                    <div className="text-[11px] text-ink-400 dark:text-ink-500 mt-0.5 flex items-center gap-2">
+                      <span><strong className="text-ink-700 dark:text-ink-300 tabular-nums">{m.chunk_count}</strong> 片段</span>
+                      <span>·</span>
+                      <span>{new Date(m.created_at).toLocaleDateString('zh-CN')}</span>
+                    </div>
+                  </div>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-ink-300 dark:text-ink-600 group-hover:text-brand-500 transition-colors">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </div>
+              ))}
+            </div>
+          </Card>
         )}
       </div>
 
@@ -248,7 +327,15 @@ export default function KnowledgePage() {
         open={showUpload}
         onClose={() => { if (!createMutation.isPending) setShowUpload(false) }}
         title="上传素材"
+        description="支持文本粘贴或上传 PDF/Word/TXT 文件，AI 会自动切分并建立向量索引"
         size="md"
+        icon={
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+        }
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowUpload(false)} disabled={createMutation.isPending}>取消</Button>
@@ -286,34 +373,49 @@ export default function KnowledgePage() {
             value={form.content ?? ''}
             onChange={(e) => setForm({ ...form, content: e.target.value })}
             rows={6}
-            placeholder="粘贴素材正文，或上传文件 (PDF / Word / 文本)…"
-            hint="上传后系统会自动切分为知识片段并建立向量索引"
+            placeholder="粘贴素材正文，或拖拽文件到下方…"
+            hint={`当前字数 ${form.content?.length ?? 0} · 上传后系统会自动切分为知识片段并建立向量索引`}
           />
-          <label className="block">
-            <span className="block text-sm font-medium text-ink-700 mb-1.5">文件</span>
-            <div className="border-2 border-dashed border-ink-200 rounded-lg p-6 text-center hover:border-brand-400 hover:bg-brand-50/30 transition-colors cursor-pointer">
-              <input type="file" className="hidden" accept=".pdf,.docx,.txt,.md" />
-              <div className="text-2xl mb-1">📎</div>
-              <p className="text-xs text-ink-500">点击或拖拽文件到此处</p>
-              <p className="text-[11px] text-ink-400 mt-0.5">PDF · DOCX · TXT · MD · 单文件 ≤ 20MB</p>
+          <div>
+            <span className="block text-sm font-medium text-ink-700 dark:text-ink-300 mb-1.5">文件</span>
+            <div
+              onDragEnter={(e) => { e.preventDefault(); dragCounter.current += 1; setDragging(true) }}
+              onDragLeave={(e) => { e.preventDefault(); dragCounter.current -= 1; if (dragCounter.current === 0) setDragging(false) }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                dragCounter.current = 0
+                setDragging(false)
+                const files = Array.from(e.dataTransfer.files)
+                if (files.length > 0) {
+                  toast.info(`已选择 ${files.length} 个文件`, files.map(f => f.name).join(', '))
+                }
+              }}
+              className={[
+                'border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all',
+                dragging
+                  ? 'border-brand-400 bg-brand-50 dark:bg-brand-900/30 dropzone-active scale-[1.02]'
+                  : 'border-ink-200 dark:border-ink-700 hover:border-brand-400 hover:bg-brand-50/30 dark:hover:bg-brand-900/20 dropzone',
+              ].join(' ')}
+            >
+              <input type="file" className="hidden" accept=".pdf,.docx,.txt,.md" multiple />
+              <div className={[
+                'mx-auto w-12 h-12 rounded-xl grid place-items-center text-2xl mb-2 transition-colors',
+                dragging ? 'bg-brand-100 dark:bg-brand-900/50 text-brand-600' : 'bg-ink-100 dark:bg-ink-800 text-ink-500',
+              ].join(' ')}>
+                {dragging ? '📥' : '📎'}
+              </div>
+              <p className={[
+                'text-xs font-medium transition-colors',
+                dragging ? 'text-brand-700 dark:text-brand-300' : 'text-ink-600 dark:text-ink-300',
+              ].join(' ')}>
+                {dragging ? '松开鼠标即可上传' : '点击或拖拽文件到此处'}
+              </p>
+              <p className="text-[11px] text-ink-400 dark:text-ink-500 mt-1">PDF · DOCX · TXT · MD · 单文件 ≤ 20MB</p>
             </div>
-          </label>
+          </div>
         </div>
       </Modal>
     </div>
-  )
-}
-
-function CategoryPill({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        'shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap',
-        active ? 'bg-brand-600 text-white shadow-sm' : 'text-ink-600 hover:bg-ink-50',
-      ].join(' ')}
-    >
-      {label}
-    </button>
   )
 }

@@ -56,3 +56,42 @@ type BudgetSummary struct {
 	LimitCents int64   `json:"limit_cents"`
 	PercentUsed float64 `json:"percent_used"`
 }
+
+// Plan is a public billing tier. Plans are read-only catalog data —
+// they're not stored in PG because they don't change often and the
+// front-end renders them from this single source.
+type Plan struct {
+	// ID is the canonical plan key: "free" | "pro" | "enterprise".
+	// Must match the tenants.plan CHECK constraint exactly.
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	PriceCents  int64    `json:"price_cents"`  // 0 for free, -1 for enterprise (custom)
+	Currency    string   `json:"currency"`
+	Period      string   `json:"period"`        // "month" | "year" | "custom"
+	Description string   `json:"description"`
+	Features    []string `json:"features"`
+	Highlight   bool     `json:"highlight"`     // marks the recommended tier
+}
+
+// CheckoutRequest is what the front-end POSTs to upgrade a tenant to
+// a paid plan. In dev mode (no real payment provider configured) we
+// flip the tenant's plan column directly. In production the same
+// shape would feed Stripe Checkout / WeChat Pay / etc.
+type CheckoutRequest struct {
+	PlanID string `json:"plan_id" validate:"required,oneof=free pro enterprise"`
+	// PaymentMethodID is opaque to us — in dev it's a fake string like
+	// "pm_demo_visa", in production it's a Stripe PaymentMethod id.
+	// Optional: free upgrades don't need one.
+	PaymentMethodID string `json:"payment_method_id,omitempty"`
+}
+
+// CheckoutResult is the response after a successful plan change. It
+// includes the new tenant state so the UI can refresh without a
+// second round-trip.
+type CheckoutResult struct {
+	TenantID  uuid.UUID `json:"tenant_id"`
+	Plan      string    `json:"plan"`
+	UpgradedAt time.Time `json:"upgraded_at"`
+	// In production, this would include a Stripe subscription id,
+	// checkout session URL, etc.
+}

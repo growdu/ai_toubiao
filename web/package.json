@@ -12,8 +12,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@tanstack/react-query": "^5.56.2",
+    "@types/dompurify": "^3.0.5",
     "axios": "^1.7.7",
+    "dompurify": "^3.4.11",
+    "marked": "^18.0.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",

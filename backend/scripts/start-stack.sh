@@ -1,12 +1,12 @@
 #!/bin/bash
-# start-stack.sh — bring up the full bidwriter backend stack (10 Go
+# start-stack.sh — bring up the full bidwriter backend stack (11 Go
 # services) in one container. Requires PG/MinIO/Redis already running
 # on the host (see backend/docker-compose.yml).
 #
 # Architecture:
 #   * One alpine container (bidwriter-stack) runs as PID 1 of the
 #     supervisor script (stack-entrypoint.sh).
-#   * The supervisor launches 10 Go binaries with setsid so each
+#   * The supervisor launches 11 Go binaries with setsid so each
 #     survives the parent's exit.
 #   * Services listen on localhost (inside the container) on a fixed
 #     port plan; api-gateway is the only externally-reachable one
@@ -72,6 +72,7 @@ declare -A PORTS=(
   [api-gateway]=7080 [project-svc]=7081 [document-svc]=7082
   [workflow-svc]=7083 [router-svc]=7085 [knowledge-svc]=7086
   [audit-svc]=7095 [template-svc]=7096 [billing-svc]=7097 [notify-svc]=7098
+  [docgen-svc]=7099
 )
 
 ensure_binaries() {

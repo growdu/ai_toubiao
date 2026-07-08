@@ -14,6 +14,11 @@
 //   /api/v1/documents/*             -> document-svc
 //   /api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
 //   /api/v1/kb/*                    -> knowledge-svc
+//   /api/v1/docgen/*               -> docgen-svc
+//   /api/v1/audit/*                -> audit-svc
+//   /api/v1/templates/*            -> template-svc
+//   /api/v1/billing/*              -> billing-svc
+//   /api/v1/notifications/*        -> notify-svc
 // Note: the public prefix is /api/v1/kb/* (not /api/v1/knowledge/*)
 // because knowledge-svc mounts its handlers under /api/v1/kb/* internally
 // and api-gateway forwards the path unchanged. Using a matching public
@@ -110,6 +115,16 @@ func run() error {
 	r.Handle("/api/v1/bids/*", proxyWithAuth)
 	r.Handle("/api/v1/kb", proxyWithAuth)
 	r.Handle("/api/v1/kb/*", proxyWithAuth)
+	r.Handle("/api/v1/docgen", proxyWithAuth)
+	r.Handle("/api/v1/docgen/*", proxyWithAuth)
+	r.Handle("/api/v1/audit", proxyWithAuth)
+	r.Handle("/api/v1/audit/*", proxyWithAuth)
+	r.Handle("/api/v1/templates", proxyWithAuth)
+	r.Handle("/api/v1/templates/*", proxyWithAuth)
+	r.Handle("/api/v1/billing", proxyWithAuth)
+	r.Handle("/api/v1/billing/*", proxyWithAuth)
+	r.Handle("/api/v1/notifications", proxyWithAuth)
+	r.Handle("/api/v1/notifications/*", proxyWithAuth)
 	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 	})
@@ -246,11 +261,37 @@ func buildRoutes(cfg *config.Config) ([]proxy.Route, error) {
 		return nil, err
 	}
 
+	docgenURL, err := parse("DOCGEN_SVC_URL", cfg.DocgenSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	auditURL, err := parse("AUDIT_SVC_URL", cfg.AuditSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	templateURL, err := parse("TEMPLATE_SVC_URL", cfg.TemplateSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	billingURL, err := parse("BILLING_SVC_URL", cfg.BillingSvcURL)
+	if err != nil {
+		return nil, err
+	}
+	notifyURL, err := parse("NOTIFY_SVC_URL", cfg.NotifySvcURL)
+	if err != nil {
+		return nil, err
+	}
+
 	return []proxy.Route{
 		{Prefix: "/api/v1/projects", Upstream: projectURL},
 		{Prefix: "/api/v1/documents", Upstream: documentURL},
 		{Prefix: "/api/v1/bids", Upstream: workflowURL},
 		{Prefix: "/api/v1/kb", Upstream: knowledgeURL},
+		{Prefix: "/api/v1/docgen", Upstream: docgenURL},
+		{Prefix: "/api/v1/audit", Upstream: auditURL},
+		{Prefix: "/api/v1/templates", Upstream: templateURL},
+		{Prefix: "/api/v1/billing", Upstream: billingURL},
+		{Prefix: "/api/v1/notifications", Upstream: notifyURL},
 	}, nil
 }
 

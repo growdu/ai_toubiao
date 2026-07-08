@@ -78,46 +78,50 @@ function Logo() {
 function Hero() {
   return (
     <section className="relative overflow-hidden bg-gradient-to-br from-brand-950 via-brand-900 to-brand-700 text-white">
-      {/* mesh background */}
-      <div className="absolute inset-0 opacity-30" style={{
-        backgroundImage: 'radial-gradient(at 20% 20%, rgba(139,180,255,0.4) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(53,103,246,0.3) 0px, transparent 50%), radial-gradient(at 80% 100%, rgba(139,180,255,0.2) 0px, transparent 50%)'
-      }} />
+      {/* Animated mesh background */}
+      <div className="absolute inset-0 bg-hero-mesh opacity-90" />
+      {/* Dot grid overlay */}
       <div className="absolute inset-0 opacity-[0.07]" style={{
         backgroundImage: 'radial-gradient(rgba(255,255,255,0.6) 1px, transparent 1px)',
         backgroundSize: '24px 24px'
       }} />
+      {/* Top gradient fade */}
+      <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-brand-950/60 to-transparent" />
 
       <div className="relative max-w-7xl mx-auto px-6 lg:px-10 pt-20 pb-24 lg:pt-28 lg:pb-32">
         <div className="grid lg:grid-cols-12 gap-12 items-center">
           <div className="lg:col-span-7">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-sm text-xs font-medium mb-6 animate-slide-up">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse-soft" />
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-sm border border-white/10 text-xs font-medium mb-6 animate-slide-up shadow-inner-ring">
+              <span className="relative flex w-2 h-2">
+                <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-300 opacity-75 animate-ping-slow" />
+                <span className="relative inline-flex rounded-full w-2 h-2 bg-emerald-300" />
+              </span>
               <span>2026 全新发布 · 多模型路由 · 人在回路</span>
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold leading-tight tracking-tight mb-6 animate-slide-up">
               让标书编制<br />
-              <span className="bg-gradient-to-r from-brand-100 via-white to-brand-200 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-brand-100 via-white to-brand-200 bg-clip-text text-transparent bg-[length:200%_100%] animate-gradient-x">
                 快 10 倍，准确 100%
               </span>
             </h1>
-            <p className="text-lg lg:text-xl text-white/80 leading-relaxed mb-8 max-w-2xl">
+            <p className="text-lg lg:text-xl text-white/80 leading-relaxed mb-8 max-w-2xl animate-slide-up" style={{ animationDelay: '80ms' }}>
               自动解析招标文件 · 智能生成章节大纲与正文 · 检索企业知识库作为证据链 · 合规审计一键完成。
               告别熬夜改稿，让 AI 帮你写完一份 80 分的标书，你只需做最后的 20 分润色。
             </p>
-            <div className="flex flex-col sm:flex-row gap-3 mb-8">
+            <div className="flex flex-col sm:flex-row gap-3 mb-8 animate-slide-up" style={{ animationDelay: '160ms' }}>
               <Link to="/register">
-                <Button variant="primary" size="lg" className="bg-white !text-brand-700 hover:!bg-brand-50 w-full sm:w-auto">
+                <Button variant="gradient" size="lg" className="w-full sm:w-auto shadow-glow hover:shadow-glow">
                   免费试用 14 天
-                  <span className="ml-1 text-xs font-normal opacity-70">无需信用卡</span>
+                  <span className="ml-1 text-xs font-normal opacity-80">无需信用卡</span>
                 </Button>
               </Link>
               <Link to="/login">
-                <Button variant="ghost" size="lg" className="!text-white hover:!bg-white/10 w-full sm:w-auto">
+                <Button variant="ghost" size="lg" className="!text-white hover:!bg-white/10 w-full sm:w-auto border border-white/15">
                   已有账号 · 登录
                 </Button>
               </Link>
             </div>
-            <div className="flex items-center gap-6 text-sm text-white/70">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/70 animate-slide-up" style={{ animationDelay: '240ms' }}>
               <div className="flex items-center gap-2">
                 <Check />
                 <span>1 份标书 5 分钟</span>
@@ -130,12 +134,19 @@ function Hero() {
                 <Check />
                 <span>私有部署可选</span>
               </div>
+              <div className="flex items-center gap-2">
+                <Check />
+                <span>数据不出租户</span>
+              </div>
             </div>
           </div>
 
           <div className="lg:col-span-5 relative">
             {/* Mock product preview */}
-            <div className="relative rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 p-4 shadow-2xl animate-slide-up">
+            <div className="relative rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 p-4 shadow-glow animate-slide-up" style={{ animationDelay: '120ms' }}>
+              {/* Glow blob behind preview */}
+              <div className="absolute -inset-4 bg-gradient-to-r from-brand-400/30 via-violet-400/20 to-emerald-400/20 rounded-3xl blur-2xl -z-10" />
+
               <div className="rounded-xl bg-white text-ink-900 overflow-hidden shadow-2xl">
                 {/* fake browser chrome */}
                 <div className="flex items-center gap-1.5 px-3 py-2 bg-ink-50 border-b border-ink-100">
@@ -156,9 +167,10 @@ function Hero() {
                       进行中
                     </span>
                   </div>
-                  {/* progress bar */}
-                  <div className="h-1.5 rounded-full bg-ink-100 overflow-hidden">
-                    <div className="h-full w-3/5 bg-gradient-to-r from-brand-500 to-brand-700 rounded-full" />
+                  {/* progress bar with shimmer */}
+                  <div className="relative h-1.5 rounded-full bg-ink-100 overflow-hidden">
+                    <div className="absolute inset-y-0 left-0 right-[40%] bg-gradient-to-r from-brand-500 to-brand-700 rounded-full" />
+                    <div className="absolute inset-y-0 left-0 right-[40%] bg-gradient-to-r from-transparent via-white/40 to-transparent bg-[length:200%_100%] animate-shimmer rounded-full" />
                   </div>
                   {/* fake chapter list */}
                   <div className="space-y-1.5 pt-1">
@@ -196,10 +208,21 @@ function Hero() {
                 </div>
               </div>
             </div>
-            {/* floating stat */}
-            <div className="hidden md:block absolute -bottom-4 -left-4 bg-white text-ink-900 rounded-xl px-4 py-3 shadow-xl border border-ink-100 animate-fade-in">
-              <div className="text-xs text-ink-400">平均节省时间</div>
-              <div className="text-2xl font-bold text-brand-600">72%</div>
+            {/* floating stat — top right */}
+            <div className="hidden md:flex absolute -top-3 -right-3 bg-white text-ink-900 rounded-xl px-3 py-2 shadow-xl border border-ink-100 items-center gap-2 animate-float">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 grid place-items-center text-emerald-600 text-base">📈</div>
+              <div>
+                <div className="text-[10px] text-ink-400 leading-none">平均节省时间</div>
+                <div className="text-lg font-bold text-emerald-600 leading-tight tabular-nums">72%</div>
+              </div>
+            </div>
+            {/* floating stat — bottom left */}
+            <div className="hidden md:flex absolute -bottom-3 -left-3 bg-white text-ink-900 rounded-xl px-3 py-2 shadow-xl border border-ink-100 items-center gap-2 animate-float" style={{ animationDelay: '1.5s' }}>
+              <div className="w-8 h-8 rounded-lg bg-brand-50 grid place-items-center text-brand-600 text-base">⚡</div>
+              <div>
+                <div className="text-[10px] text-ink-400 leading-none">5 分钟</div>
+                <div className="text-xs font-semibold text-brand-600 leading-tight">出一份标书</div>
+              </div>
             </div>
           </div>
         </div>
@@ -217,16 +240,27 @@ function Check() {
 }
 
 function LogoStrip() {
+  const logos = ['中建八局', '中铁建工', '上海建工', '中国电信', '中国移动', '国家电网', '中交一公局', '中冶集团']
+  // Duplicate for the marquee effect — the second copy is purely visual filler
+  // so the strip can scroll infinitely without showing an empty gap.
+  const looped = [...logos, ...logos]
   return (
-    <section className="bg-white border-b border-ink-100 py-8">
+    <section className="bg-white dark:bg-ink-900 border-b border-ink-100 dark:border-ink-800 py-8 overflow-hidden">
       <div className="max-w-7xl mx-auto px-6 lg:px-10">
-        <div className="text-center text-xs uppercase tracking-wider text-ink-400 mb-5">
+        <div className="text-center text-xs uppercase tracking-wider text-ink-400 dark:text-ink-500 mb-5">
           已被这些企业的投标团队使用
         </div>
-        <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-4 opacity-60">
-          {['中建八局', '中铁建工', '上海建工', '中国电信', '中国移动', '国家电网', '中交一公局'].map(name => (
-            <span key={name} className="text-base lg:text-lg font-semibold text-ink-700 tracking-wide">{name}</span>
-          ))}
+        <div className="relative overflow-hidden mask-fade">
+          <div className="flex items-center gap-x-12 gap-y-4 whitespace-nowrap animate-marquee will-change-transform">
+            {looped.map((name, i) => (
+              <span key={`${name}-${i}`} className="text-base lg:text-lg font-semibold text-ink-700 dark:text-ink-300 tracking-wide opacity-70 hover:opacity-100 transition-opacity shrink-0">
+                {name}
+              </span>
+            ))}
+          </div>
+          {/* edge fade masks */}
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-white dark:from-ink-900 to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-white dark:from-ink-900 to-transparent" />
         </div>
       </div>
     </section>
@@ -240,42 +274,58 @@ function FeatureGrid() {
       title: '智能大纲生成',
       desc: '解析招标文件后 30 秒生成符合招标要求的章节大纲，结构、层级、字数全自动规划。',
       accent: 'from-blue-500 to-blue-700',
+      stat: '30s',
+      statLabel: '生成大纲',
     },
     {
       icon: '✍️',
       title: '章节正文撰写',
       desc: '基于知识库证据链撰写章节正文，每段都有出处标记，支持多模型路由选最优输出。',
       accent: 'from-purple-500 to-purple-700',
+      stat: '4 模型',
+      statLabel: '动态路由',
     },
     {
       icon: '🔍',
       title: 'RAG 证据检索',
       desc: '向量 + BM25 + RRF 混合检索，自动从你的企业资质库、过往标书、专利证书中找证据。',
       accent: 'from-emerald-500 to-emerald-700',
+      stat: '3 路',
+      statLabel: '混合检索',
     },
     {
       icon: '🖼️',
       title: '图表自动渲染',
       desc: '甘特图、组织架构、网络拓扑，Mermaid / go-echarts 一键渲染并嵌入 Word。',
       accent: 'from-amber-500 to-amber-700',
+      stat: '12 类',
+      statLabel: '图表模板',
     },
     {
       icon: '✅',
       title: '合规审计',
       desc: '废标项扫描、一致性校验、资质合规检查，把 90% 的常见废标原因挡在提交前。',
       accent: 'from-rose-500 to-rose-700',
+      stat: '120+',
+      statLabel: '审计规则',
     },
     {
       icon: '👥',
       title: '人在回路 (HIL)',
       desc: '3 个暂停点：解析后、生成前、提交前。关键决策由人拍板，AI 只做初稿。',
       accent: 'from-indigo-500 to-indigo-700',
+      stat: '3 步',
+      statLabel: '人工审核',
     },
   ]
 
   return (
-    <section id="features" className="py-20 lg:py-28 bg-ink-50">
-      <div className="max-w-7xl mx-auto px-6 lg:px-10">
+    <section id="features" className="relative py-20 lg:py-28 bg-ink-50 dark:bg-ink-900 overflow-hidden">
+      {/* decorative blurred orbs */}
+      <div className="absolute top-1/4 -left-20 w-72 h-72 bg-brand-200/30 dark:bg-brand-900/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-1/4 -right-20 w-72 h-72 bg-violet-200/30 dark:bg-violet-900/20 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative max-w-7xl mx-auto px-6 lg:px-10">
         <SectionHeader
           eyebrow="核心功能"
           title="为什么投标团队选 BidWriter"
@@ -285,14 +335,31 @@ function FeatureGrid() {
           {features.map((f, i) => (
             <div
               key={f.title}
-              className="group relative p-6 rounded-2xl bg-white border border-ink-100 hover:border-brand-200 hover:shadow-lg hover:-translate-y-0.5 transition-all"
+              className="group relative p-6 rounded-2xl bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700 hover:border-brand-200 dark:hover:border-brand-700 hover:shadow-card-hover hover:-translate-y-1 transition-all duration-300"
               style={{ animationDelay: `${i * 50}ms` }}
             >
-              <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br ${f.accent} text-white text-2xl mb-4 shadow-md`}>
-                {f.icon}
+              {/* Top-row: icon + floating stat */}
+              <div className="flex items-start justify-between mb-4">
+                <div className={`relative inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br ${f.accent} text-white text-2xl shadow-md group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300`}>
+                  {f.icon}
+                  {/* glow on hover */}
+                  <div className={`absolute inset-0 rounded-xl bg-gradient-to-br ${f.accent} opacity-0 group-hover:opacity-40 blur-xl transition-opacity -z-10`} />
+                </div>
+                <div className="text-right">
+                  <div className="text-lg font-bold text-ink-900 dark:text-white tabular-nums leading-none">{f.stat}</div>
+                  <div className="text-[10px] text-ink-400 mt-0.5">{f.statLabel}</div>
+                </div>
               </div>
-              <h3 className="text-base font-semibold mb-2">{f.title}</h3>
-              <p className="text-sm text-ink-500 leading-relaxed">{f.desc}</p>
+              <h3 className="text-base font-semibold mb-2 text-ink-900 dark:text-white">{f.title}</h3>
+              <p className="text-sm text-ink-500 dark:text-ink-400 leading-relaxed">{f.desc}</p>
+              {/* hover arrow */}
+              <div className="mt-4 flex items-center gap-1 text-xs font-medium text-brand-600 dark:text-brand-400 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all duration-300">
+                <span>了解详情</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <polyline points="12 5 19 12 12 19" />
+                </svg>
+              </div>
             </div>
           ))}
         </div>
@@ -316,14 +383,22 @@ function SectionHeader({ eyebrow, title, desc }: { eyebrow: string; title: strin
 
 function HowItWorks() {
   const steps = [
-    { n: '01', t: '上传招标文件', d: '支持 .pdf / .docx / .txt，系统自动解析出评分项、资质要求、技术规格。' },
-    { n: '02', t: '导入知识库', d: '上传过往标书、企业资质、专利证书、团队简历，AI 建立可检索的证据库。' },
-    { n: '03', t: 'AI 生成 + 人在回路', d: '一键生成大纲和初稿，三个暂停点让你审核关键决策。' },
-    { n: '04', t: '审计 + 导出 Word', d: '废标项扫描、证据链核对、一致性校验后导出符合招标格式的 .docx。' },
+    { n: '01', t: '上传招标文件', d: '支持 .pdf / .docx / .txt，系统自动解析出评分项、资质要求、技术规格。', icon: '📤', tone: 'brand' },
+    { n: '02', t: '导入知识库', d: '上传过往标书、企业资质、专利证书、团队简历，AI 建立可检索的证据库。', icon: '📚', tone: 'emerald' },
+    { n: '03', t: 'AI 生成 + 人在回路', d: '一键生成大纲和初稿，三个暂停点让你审核关键决策。', icon: '⚡', tone: 'purple' },
+    { n: '04', t: '审计 + 导出 Word', d: '废标项扫描、证据链核对、一致性校验后导出符合招标格式的 .docx。', icon: '✅', tone: 'amber' },
   ]
+  const toneBg: Record<string, string> = {
+    brand:   'bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300',
+    emerald: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300',
+    purple:  'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300',
+    amber:   'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300',
+  }
   return (
-    <section id="how" className="py-20 lg:py-28 bg-white">
-      <div className="max-w-7xl mx-auto px-6 lg:px-10">
+    <section id="how" className="py-20 lg:py-28 bg-white dark:bg-ink-900 relative overflow-hidden">
+      {/* subtle grid background */}
+      <div className="absolute inset-0 bg-grid-fine opacity-50 dark:opacity-30 pointer-events-none" />
+      <div className="relative max-w-7xl mx-auto px-6 lg:px-10">
         <SectionHeader
           eyebrow="使用流程"
           title="从 RFP 到投标文件，4 步搞定"
@@ -331,13 +406,20 @@ function HowItWorks() {
         />
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mt-12">
           {steps.map((s, i) => (
-            <div key={s.n} className="relative">
+            <div key={s.n} className="group relative">
               {i < steps.length - 1 && (
-                <div className="hidden lg:block absolute top-8 left-full w-full h-px bg-gradient-to-r from-brand-200 to-transparent -translate-x-4" />
+                <div className="hidden lg:block absolute top-10 left-full w-full h-px bg-gradient-to-r from-brand-200 via-brand-100 to-transparent -translate-x-4" />
               )}
-              <div className="text-3xl font-bold text-brand-600/30 mb-2">{s.n}</div>
-              <h3 className="text-base font-semibold mb-2">{s.t}</h3>
-              <p className="text-sm text-ink-500 leading-relaxed">{s.d}</p>
+              <div className="card p-5 hover:-translate-y-1 hover:shadow-card-hover hover:border-brand-200 dark:hover:border-brand-700 transition-all duration-300 h-full">
+                <div className="flex items-center justify-between mb-3">
+                  <div className={`w-12 h-12 rounded-xl ${toneBg[s.tone]} grid place-items-center text-2xl group-hover:scale-110 transition-transform`}>
+                    {s.icon}
+                  </div>
+                  <div className="text-2xl font-bold text-ink-200 dark:text-ink-700 tabular-nums">{s.n}</div>
+                </div>
+                <h3 className="text-base font-semibold mb-2 text-ink-900 dark:text-white">{s.t}</h3>
+                <p className="text-sm text-ink-500 dark:text-ink-400 leading-relaxed">{s.d}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -545,29 +627,46 @@ function FAQ() {
 
 function FinalCTA() {
   return (
-    <section className="py-20 lg:py-28 bg-gradient-to-br from-brand-700 via-brand-800 to-brand-950 text-white relative overflow-hidden">
+    <section className="relative py-20 lg:py-28 overflow-hidden bg-ink-950 text-white">
+      {/* Animated gradient mesh */}
+      <div className="absolute inset-0 bg-gradient-animated opacity-95" />
       <div className="absolute inset-0 opacity-30" style={{
         backgroundImage: 'radial-gradient(at 30% 20%, rgba(139,180,255,0.4) 0px, transparent 50%), radial-gradient(at 70% 80%, rgba(53,103,246,0.3) 0px, transparent 50%)'
       }} />
+      <div className="absolute inset-0 opacity-[0.05]" style={{
+        backgroundImage: 'radial-gradient(rgba(255,255,255,0.6) 1px, transparent 1px)',
+        backgroundSize: '24px 24px'
+      }} />
+      {/* floating orbs */}
+      <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-32 h-32 rounded-full bg-emerald-400/20 blur-3xl animate-pulse-soft" />
+      <div className="absolute top-1/2 right-1/4 -translate-y-1/2 w-40 h-40 rounded-full bg-violet-400/20 blur-3xl animate-pulse-soft" style={{ animationDelay: '1s' }} />
+
       <div className="relative max-w-4xl mx-auto px-6 lg:px-10 text-center">
-        <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight mb-4">
-          下一份标书，让 AI 来写
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-sm border border-white/10 text-xs font-medium mb-6 animate-slide-up">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse-soft" />
+          <span>无需信用卡 · 14 天免费</span>
+        </div>
+        <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight mb-4 animate-slide-up">
+          下一份标书，<span className="bg-gradient-to-r from-white via-brand-100 to-white bg-clip-text text-transparent">让 AI 来写</span>
         </h2>
-        <p className="text-lg text-white/80 mb-8 max-w-2xl mx-auto">
+        <p className="text-lg text-white/80 mb-8 max-w-2xl mx-auto animate-slide-up" style={{ animationDelay: '80ms' }}>
           14 天免费试用，完整体验所有功能。觉得好用再付费，不喜欢直接走人。
         </p>
-        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <div className="flex flex-col sm:flex-row gap-3 justify-center animate-slide-up" style={{ animationDelay: '160ms' }}>
           <Link to="/register">
-            <Button variant="primary" size="lg" className="bg-white !text-brand-700 hover:!bg-brand-50">
+            <Button variant="gradient" size="lg" className="shadow-glow w-full sm:w-auto">
               免费试用 14 天
             </Button>
           </Link>
-          <Link to="/pricing">
-            <Button variant="ghost" size="lg" className="!text-white hover:!bg-white/10">
-              查看套餐详情
+          <Link to="/login">
+            <Button variant="ghost" size="lg" className="!text-white hover:!bg-white/10 border border-white/15 w-full sm:w-auto">
+              已有账号 · 直接登录
             </Button>
           </Link>
         </div>
+        <p className="text-xs text-white/50 mt-6 animate-slide-up" style={{ animationDelay: '240ms' }}>
+          已被 200+ 投标团队使用 · 平均节省 72% 编制时间
+        </p>
       </div>
     </section>
   )
@@ -575,19 +674,66 @@ function FinalCTA() {
 
 function Footer() {
   return (
-    <footer className="bg-ink-900 text-ink-300 py-12">
-      <div className="max-w-7xl mx-auto px-6 lg:px-10">
-        <div className="grid md:grid-cols-4 gap-8 mb-8">
-          <div className="md:col-span-1">
+    <footer className="bg-ink-900 text-ink-300 relative overflow-hidden">
+      {/* top accent line */}
+      <div className="h-px bg-gradient-to-r from-transparent via-brand-500/40 to-transparent" />
+
+      <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12 lg:py-16">
+        {/* Top row: brand + newsletter */}
+        <div className="grid md:grid-cols-12 gap-8 mb-10 pb-10 border-b border-ink-700/60">
+          <div className="md:col-span-5">
             <div className="flex items-center gap-2 mb-3">
               <Logo />
               <div className="text-white font-bold">AI 标书系统</div>
             </div>
-            <p className="text-sm text-ink-400 leading-relaxed">
-              AI 驱动的智能标书编制平台。
-              <br />让每一份标书都快、准、美。
+            <p className="text-sm text-ink-400 leading-relaxed mb-4 max-w-sm">
+              AI 驱动的智能标书编制平台。<br />
+              让每一份标书都快、准、美。
             </p>
+            <div className="flex items-center gap-3">
+              <SocialButton label="GitHub">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.69 1.25 3.35.95.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.16 1.18a10.94 10.94 0 0 1 5.75 0c2.2-1.49 3.16-1.18 3.16-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.07.78 2.15v3.19c0 .31.21.67.79.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z" />
+                </svg>
+              </SocialButton>
+              <SocialButton label="Twitter">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M22 5.8a8.5 8.5 0 0 1-2.36.65 4.13 4.13 0 0 0 1.8-2.27 8.21 8.21 0 0 1-2.6 1 4.1 4.1 0 0 0-7 3.74 11.64 11.64 0 0 1-8.45-4.29 4.16 4.16 0 0 0-.55 2.07 4.09 4.09 0 0 0 1.82 3.41 4.05 4.05 0 0 1-1.86-.51v.05a4.1 4.1 0 0 0 3.29 4 4.16 4.16 0 0 1-1.85.07 4.11 4.11 0 0 0 3.83 2.84A8.22 8.22 0 0 1 2 18.34a11.62 11.62 0 0 0 6.29 1.84A11.59 11.59 0 0 0 20 8.45v-.53a8.18 8.18 0 0 0 2-2.12z" />
+                </svg>
+              </SocialButton>
+              <SocialButton label="邮箱">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                  <polyline points="22,6 12,13 2,6" />
+                </svg>
+              </SocialButton>
+            </div>
           </div>
+
+          {/* Newsletter */}
+          <div className="md:col-span-7">
+            <div className="max-w-md">
+              <h3 className="text-sm font-semibold text-white mb-1">订阅产品更新</h3>
+              <p className="text-xs text-ink-400 mb-3">每月一封，分享新功能、行业案例、最佳实践。</p>
+              <form className="flex items-stretch gap-2" onSubmit={(e) => e.preventDefault()}>
+                <input
+                  type="email"
+                  placeholder="your@email.com"
+                  className="flex-1 px-3 py-2 bg-ink-800 border border-ink-700 rounded-lg text-sm text-white placeholder:text-ink-500 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-900"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium transition-colors shadow-sm"
+                >
+                  订阅
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        {/* Link columns */}
+        <div className="grid md:grid-cols-4 gap-8 mb-8">
           <FooterCol
             title="产品"
             links={[
@@ -595,6 +741,7 @@ function Footer() {
               { name: '怎么用', href: '#how' },
               { name: '适用场景', href: '#cases' },
               { name: '套餐', href: '#pricing' },
+              { name: '更新日志', href: '#' },
             ]}
           />
           <FooterCol
@@ -611,21 +758,48 @@ function Footer() {
             links={[
               { name: '帮助中心', href: '#' },
               { name: 'API 文档', href: '#' },
+              { name: '状态页', href: '#' },
               { name: '服务条款', href: '#' },
+            ]}
+          />
+          <FooterCol
+            title="开发者"
+            links={[
+              { name: '开源仓库', href: '#' },
+              { name: '变更日志', href: '#' },
+              { name: '贡献指南', href: '#' },
               { name: '隐私政策', href: '#' },
             ]}
           />
         </div>
-        <div className="pt-8 border-t border-ink-700 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-ink-500">
-          <div>© {new Date().getFullYear()} AI 标书系统 · AGPL-3.0 License</div>
-          <div className="flex items-center gap-4">
-            <span>hello@bidwriter.app</span>
+        <div className="pt-8 border-t border-ink-700/60 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-ink-500">
+          <div>© {new Date().getFullYear()} AI 标书系统 · AGPL-3.0 License · Made with ❤️ in China</div>
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="relative flex w-1.5 h-1.5">
+                <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-75 animate-ping-slow" />
+                <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-emerald-400" />
+              </span>
+              系统状态: 正常
+            </span>
             <span>·</span>
             <span>v1.0.0</span>
           </div>
         </div>
       </div>
     </footer>
+  )
+}
+
+function SocialButton({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <a
+      href="#"
+      aria-label={label}
+      className="w-8 h-8 rounded-lg bg-ink-800 border border-ink-700 hover:border-brand-500 hover:bg-ink-700 text-ink-300 hover:text-brand-300 grid place-items-center transition-all"
+    >
+      {children}
+    </a>
   )
 }
 

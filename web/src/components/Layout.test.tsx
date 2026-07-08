@@ -66,8 +66,10 @@ describe('Layout', () => {
     // /bids/abc should still highlight the "标书管理" nav item, because
     // Layout uses location.pathname.startsWith(item.path).
     renderAt('/bids/abc-123')
-    const navLinks = screen.getAllByRole('link')
-    const active = navLinks.find((a) => a.getAttribute('href') === '/bids')
-    expect(active!.className).toContain('bg-brand-600')
+    // Find the nav item by its visible label rather than href, since the
+    // brand logo at the top of the sidebar also links to /bids and would
+    // otherwise win `find()` (which returns the first match).
+    const navLink = screen.getByRole('link', { name: /标书管理/ })
+    expect(navLink.className).toContain('bg-brand-600')
   })
 })

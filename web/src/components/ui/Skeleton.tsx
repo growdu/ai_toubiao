@@ -47,6 +47,23 @@ export function SkeletonCard({ className = '' }: { className?: string }) {
   )
 }
 
+export function SkeletonList({ rows = 5, className = '' }: { rows?: number; className?: string }) {
+  return (
+    <div className={`space-y-2 ${className}`}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+          <Skeleton className="w-9 h-9 shrink-0" rounded="lg" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-3.5 w-1/3" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+          <Skeleton className="h-5 w-14" rounded="full" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function SkeletonStatCard() {
   return (
     <div className="card p-4 flex items-center gap-3">

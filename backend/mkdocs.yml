@@ -103,6 +103,8 @@ nav:
       - 数据模型: architecture/data-model.md
       - AI 路由: architecture/ai-router.md
       - 状态机: architecture/state-machine.md
+      - doc-gen 模块: architecture/doc-gen.md
+      - docgen-svc 服务化: architecture/docgen-svc.md
   - 计划:
       - v1 设计: plan/v1-design.md
       - 7 个决策: plan/open-questions-decisions.md
@@ -116,6 +118,10 @@ nav:
       - 0005 审计模式: decisions/0005-audit-agent-mode.md
       - 0006 模板市集: decisions/0006-template-marketplace.md
       - 0007 数据同步: decisions/0007-data-sync.md
+      - 0008 文档存储后端: decisions/0008-document-storage-backend.md
+      - 0009 pgvector 编解码: decisions/0009-pgvector-codec.md
+      - 0010 导出架构更新: decisions/0010-export-architecture-update.md
+      - 0011 doc-gen CLI 优先: decisions/0011-doc-gen-cli-first.md
   - 开发:
       - 快速开始: development/getting-started.md
       - 开发流程（先文档）: development/workflow.md

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { bidsApi } from '../../api/bids'
 import { toast } from '../../lib/toast'
 import { Button, Card, ProgressBar, StatusBadge } from '../../components/ui'
-import { BID_STATUS_LABELS } from './workspace-helpers'
+import { BID_STATUS_LABELS, WORKFLOW_STEPS, workflowStepIndex } from './workspace-helpers'
 
 type ExportFormat = 'word' | 'pdf'
 
@@ -53,10 +53,23 @@ export default function ExportPage() {
     enabled: !!id,
   })
 
+  // Outline query — feeds the chapter preview section below. Fetched
+  // independently of the bid status query so a slow outline doesn't
+  // block the format-card UI from rendering.
+  const { data: outlineData } = useQuery({
+    queryKey: ['outline', id],
+    queryFn: () => bidsApi.getOutline(id!),
+    enabled: !!id,
+  })
+  const chapters = outlineData?.data.data || []
+
+  const [showPreview, setShowPreview] = useState(false)
+
   const bid = data?.data.data
   const ready = bid?.status === 'done'
   const progress = bid && bid.total_chapters > 0
     ? Math.round((bid.done_chapters / bid.total_chapters) * 100) : 0
+  const stepIdx = workflowStepIndex(bid?.status ?? '')
 
   const [exporting, setExporting] = useState<ExportFormat | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -82,44 +95,141 @@ export default function ExportPage() {
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="text-sm text-ink-400">加载中…</div>
+        <div className="text-sm text-ink-400 dark:text-ink-500">加载中…</div>
       </div>
     )
   }
 
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-thin">
+    <div className="flex-1 overflow-y-auto scrollbar-thin bg-ink-50 dark:bg-ink-900">
       <div className="max-w-4xl mx-auto px-6 py-8">
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-xs text-ink-500 mb-4 animate-fade-in">
-          <Link to="/bids" className="hover:text-ink-800">标书列表</Link>
-          <span className="text-ink-300">/</span>
-          <Link to={`/bids/${id}`} className="hover:text-ink-800 truncate max-w-xs">
+        <div className="flex items-center gap-2 text-xs text-ink-500 dark:text-ink-400 mb-4 animate-fade-in">
+          <Link to="/bids" className="hover:text-ink-800 dark:hover:text-ink-200">标书列表</Link>
+          <span className="text-ink-300 dark:text-ink-600">/</span>
+          <Link to={`/bids/${id}`} className="hover:text-ink-800 dark:hover:text-ink-200 truncate max-w-xs">
             {bid?.project_name || '标书'}
           </Link>
-          <span className="text-ink-300">/</span>
-          <span className="text-ink-700">导出</span>
+          <span className="text-ink-300 dark:text-ink-600">/</span>
+          <span className="text-ink-700 dark:text-ink-200">导出</span>
         </div>
 
         {/* Hero */}
         <div className="mb-8 animate-slide-up">
-          <div className="text-xs font-medium uppercase tracking-wider text-brand-600 mb-1">最后一步</div>
+          <div className="text-xs font-medium uppercase tracking-wider text-brand-600 dark:text-brand-400 mb-1">最后一步</div>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-ink-900 tracking-tight">导出文档</h1>
-              <p className="text-sm text-ink-500 mt-1">{bid?.project_name || '标书文档'}</p>
+              <h1 className="text-2xl font-bold text-ink-900 dark:text-white tracking-tight">导出文档</h1>
+              <p className="text-sm text-ink-500 dark:text-ink-400 mt-1">{bid?.project_name || '标书文档'}</p>
             </div>
             {bid && <StatusBadge status={bid.status} labels={BID_STATUS_LABELS} />}
           </div>
-          {bid && bid.total_chapters > 0 && (
-            <div className="mt-4 max-w-md">
-              <ProgressBar value={progress} showLabel size="md" tone={ready ? 'success' : 'brand'} />
-              <p className="text-xs text-ink-500 mt-1.5">
-                已完成 <strong className="text-ink-700 tabular-nums">{bid.done_chapters}</strong> / {bid.total_chapters} 个章节
-              </p>
+
+          {/* Workflow progress with stepper */}
+          <div className="mt-5 p-4 rounded-2xl bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700 shadow-soft">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-semibold text-ink-700 dark:text-ink-200">工作流进度</div>
+              {bid && bid.total_chapters > 0 && (
+                <div className="text-[11px] text-ink-500 dark:text-ink-400 tabular-nums">
+                  已完成 <strong className="text-ink-700 dark:text-ink-200">{bid.done_chapters}</strong> / {bid.total_chapters} 章节
+                </div>
+              )}
             </div>
-          )}
+            <ProgressBar value={progress} showLabel tone={ready ? 'success' : bid?.status === 'failed' ? 'rose' : 'brand'} size="md" />
+            {/* mini stepper */}
+            <ol className="flex items-center justify-between mt-3 gap-1">
+              {WORKFLOW_STEPS.map((step, i) => {
+                const reached = i <= stepIdx
+                const active = i === stepIdx
+                return (
+                  <li key={step.id} className="flex items-center gap-1.5 flex-1">
+                    <span className={[
+                      'inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-bold shrink-0',
+                      active ? 'bg-brand-600 text-white shadow-pop' :
+                      reached ? 'bg-emerald-500 text-white' :
+                      'bg-ink-200 dark:bg-ink-700 text-ink-500 dark:text-ink-400',
+                    ].join(' ')}>
+                      {reached && !active ? '✓' : i + 1}
+                    </span>
+                    <span className={[
+                      'text-[10px] truncate',
+                      active ? 'text-brand-700 dark:text-brand-300 font-semibold' :
+                      reached ? 'text-emerald-700 dark:text-emerald-400' :
+                      'text-ink-400 dark:text-ink-500',
+                    ].join(' ')}>{step.label}</span>
+                  </li>
+                )
+              })}
+            </ol>
+          </div>
         </div>
+
+        {/* Chapter preview — collapsed by default. Lets the user sanity-check
+           what's about to be exported before committing. Critical for the
+           "我在导出什么" question users always ask on first export. */}
+        {chapters.length > 0 && (
+          <Card padded={false} className="mb-6 animate-slide-up overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowPreview(!showPreview)}
+              className="w-full flex items-center justify-between px-5 py-3 text-sm hover:bg-ink-50 dark:hover:bg-ink-800/50 transition-colors"
+              aria-expanded={showPreview}
+            >
+              <span className="inline-flex items-center gap-2 font-medium text-ink-800 dark:text-ink-100">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="8" y1="13" x2="16" y2="13" />
+                  <line x1="8" y1="17" x2="14" y2="17" />
+                </svg>
+                章节目录预览
+                <span className="text-xs text-ink-400 dark:text-ink-500 font-normal">({chapters.length} 章节)</span>
+              </span>
+              <span className="inline-flex items-center gap-2 text-xs text-ink-500 dark:text-ink-400">
+                {showPreview ? '收起' : '展开'}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showPreview ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 200ms' }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </span>
+            </button>
+            {showPreview && (
+              <div className="px-5 pb-4 pt-2 border-t border-ink-100 dark:border-ink-700 animate-slide-down">
+                <ol className="space-y-1 max-h-72 overflow-y-auto scrollbar-thin">
+                  {chapters.map((ch, i) => (
+                    <li
+                      key={ch.id}
+                      className="flex items-center gap-3 text-xs py-1.5 px-2 rounded hover:bg-ink-50 dark:hover:bg-ink-800/50 transition-colors"
+                      style={{ paddingLeft: `${Math.max(0, (ch.level - 1) * 16) + 8}px` }}
+                    >
+                      <span className="shrink-0 w-5 h-5 rounded bg-ink-100 dark:bg-ink-700 grid place-items-center text-[10px] font-mono text-ink-500 dark:text-ink-400 tabular-nums">
+                        {i + 1}
+                      </span>
+                      <span className={[
+                        'flex-1 truncate',
+                        ch.level === 1 ? 'font-semibold text-ink-900 dark:text-white' : 'text-ink-700 dark:text-ink-200',
+                      ].join(' ')}>
+                        {ch.title}
+                      </span>
+                      <span className="shrink-0 inline-flex items-center gap-1.5 text-ink-500 dark:text-ink-400 tabular-nums">
+                        <span>目标 {ch.target_word_count}</span>
+                        {ch.priority === 'critical' && (
+                          <span className="px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-[10px] font-medium">关键</span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <div className="mt-3 pt-3 border-t border-ink-100 dark:border-ink-700 flex items-center justify-between text-[11px] text-ink-500 dark:text-ink-400">
+                  <span>导出后可在 Word / PDF 中按此目录结构呈现</span>
+                  <span className="tabular-nums">
+                    总目标字数 <strong className="text-ink-700 dark:text-ink-200">{chapters.reduce((acc, c) => acc + c.target_word_count, 0).toLocaleString('zh-CN')}</strong>
+                  </span>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Format cards */}
         <div className="grid md:grid-cols-2 gap-4 mb-6">
@@ -131,31 +241,40 @@ export default function ExportPage() {
             return (
               <Card
                 key={fmt}
-                className="relative overflow-hidden animate-slide-up"
+                className={[
+                  'relative overflow-hidden animate-slide-up transition-all',
+                  ready ? 'hover:shadow-card-hover hover:-translate-y-0.5 hover:border-brand-200' : '',
+                ].join(' ')}
                 style={{ animationDelay: `${fmt === 'word' ? 0 : 80}ms` }}
+                tone={ready && fmt === 'word' ? 'brand' : 'default'}
               >
+                {ready && fmt === 'word' && (
+                  <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-brand-600 text-white text-[10px] font-semibold shadow-pop">
+                    推荐
+                  </div>
+                )}
                 <div className="flex items-start gap-4 mb-4">
                   <div className={[
-                    'shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center',
-                    tone === 'blue' ? 'bg-brand-50 text-brand-600' : 'bg-red-50 text-red-600',
+                    'shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center shadow-soft',
+                    tone === 'blue' ? 'bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300' : 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300',
                   ].join(' ')}>
                     {meta.icon}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <h3 className="text-base font-semibold text-ink-900">{meta.label}</h3>
+                      <h3 className="text-base font-semibold text-ink-900 dark:text-white">{meta.label}</h3>
                       <span className={[
                         'text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded',
-                        tone === 'blue' ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700',
+                        tone === 'blue' ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300',
                       ].join(' ')}>{meta.ext}</span>
                     </div>
-                    <p className="text-xs text-ink-500">{meta.description}</p>
+                    <p className="text-xs text-ink-500 dark:text-ink-400">{meta.description}</p>
                   </div>
                 </div>
 
                 <ul className="space-y-1.5 mb-5">
                   {meta.highlights.map((h) => (
-                    <li key={h} className="flex items-start gap-2 text-xs text-ink-600">
+                    <li key={h} className="flex items-start gap-2 text-xs text-ink-600 dark:text-ink-300">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
                         className={tone === 'blue' ? 'text-brand-500 mt-0.5 shrink-0' : 'text-red-500 mt-0.5 shrink-0'}>
@@ -190,7 +309,7 @@ export default function ExportPage() {
 
         {/* Status messages */}
         {error && (
-          <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-700 animate-fade-in">
+          <div className="flex items-start gap-2 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-100 dark:border-red-800 rounded-xl text-sm text-red-700 dark:text-red-300 animate-fade-in mb-4">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
@@ -201,17 +320,17 @@ export default function ExportPage() {
         )}
 
         {!ready && (
-          <Card className="bg-amber-50/50 border-amber-100">
+          <Card className="bg-amber-50/50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-900/30">
             <div className="flex items-start gap-3">
-              <div className="shrink-0 w-9 h-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+              <div className="shrink-0 w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 flex items-center justify-center">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10" />
                   <polyline points="12 6 12 12 16 14" />
                 </svg>
               </div>
               <div>
-                <h4 className="font-semibold text-amber-900 text-sm">标书尚未就绪</h4>
-                <p className="text-xs text-amber-800 mt-1">
+                <h4 className="font-semibold text-amber-900 dark:text-amber-200 text-sm">标书尚未就绪</h4>
+                <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">
                   请等待所有章节生成并通过审计。当前状态：
                   <strong>{BID_STATUS_LABELS[bid?.status ?? ''] ?? bid?.status}</strong>
                 </p>

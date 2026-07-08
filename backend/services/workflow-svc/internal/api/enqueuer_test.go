@@ -16,6 +16,7 @@ type fakeEnqueuer struct {
 	chaptersCalled   bool
 	chapterCalled    bool
 	chapterCallTitle string
+	chapterCallProm  string
 	auditCalled      bool
 	exportCalled     bool
 }
@@ -28,9 +29,10 @@ func (f *fakeEnqueuer) EnqueueChaptersForBid(context.Context, uuid.UUID, uuid.UU
 	f.chaptersCalled = true
 	return nil
 }
-func (f *fakeEnqueuer) EnqueueChapter(_ context.Context, _, _, _, _ uuid.UUID, title string) error {
+func (f *fakeEnqueuer) EnqueueChapter(_ context.Context, _, _, _, _ uuid.UUID, title, prompt string) error {
 	f.chapterCalled = true
 	f.chapterCallTitle = title
+	f.chapterCallProm = prompt
 	return nil
 }
 func (f *fakeEnqueuer) EnqueueAudit(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {

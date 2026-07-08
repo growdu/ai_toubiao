@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/bidwriter/shared/pkg/httperr"
 	"github.com/bidwriter/shared/pkg/logger"
@@ -344,6 +345,18 @@ func (h *ChapterHandlers) generateChapter(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Optional request body — currently only `prompt` (the per-chapter
+	// user instruction from ChapterInspector's "提示词" tab). The body
+	// is read best-effort: a missing or malformed body simply means
+	// "no custom prompt", which is the historical behavior.
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		_ = readJSON(r.Body, &req) // ignore — empty prompt is fine
+	}
+	customPrompt := strings.TrimSpace(req.Prompt)
+
 	// Look up chapter spec + bid job info.
 	var title string
 	var tenantID uuid.UUID
@@ -365,7 +378,7 @@ func (h *ChapterHandlers) generateChapter(w http.ResponseWriter, r *http.Request
 
 	// Enqueue the chapter generation task via Asynq if enqueuer is available.
 	if h.Enqueuer != nil {
-		if err := h.Enqueuer.EnqueueChapter(r.Context(), wfID, bidJobID, tenantID, chapterID, title); err != nil {
+		if err := h.Enqueuer.EnqueueChapter(r.Context(), wfID, bidJobID, tenantID, chapterID, title, customPrompt); err != nil {
 			h.Log.Warn("generateChapter: enqueue failed",
 				slog.String("chapter_id", chapterID.String()),
 				slog.String("err", err.Error()))

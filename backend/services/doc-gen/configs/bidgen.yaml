@@ -1,0 +1,22 @@
+# bidgen CLI 默认配置
+# 复制到 ~/.bidgen/bidgen.yaml 或用 -c 指定
+
+# SQLite 数据库路径
+db_path: "~/.bidgen/bidgen.db"
+
+# LLM 配置（二选一）
+# 方式1：直连 OpenAI 兼容 API
+api_base: "https://api.openai.com/v1"
+model: "gpt-4o"
+embed_model: "text-embedding-3-small"
+# API key 从环境变量 LLM_API_KEY 读取，不写入配置文件
+
+# 方式2：通过 router-svc（取消注释并设置）
+# router_url: "http://localhost:8085"
+
+# 渲染依赖路径
+mmdc_path: "mmdc"
+python_path: "python3"
+
+# 日志级别
+log_level: "info"

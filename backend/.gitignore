@@ -2,6 +2,12 @@
 bin/
 *.exe
 
+# Compiled Go binaries accidentally built into source tree
+# (use scripts/build-services.sh -> /tmp/bidwriter-bin instead)
+/services/*/api-gateway
+/services/*/*-svc
+/services/*/bidgen
+
 # Build outputs
 site/
 *.o

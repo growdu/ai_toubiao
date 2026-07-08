@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import { ToastContainer } from './components/ToastContainer'
 import { useThemeStore } from './lib/theme'
 import { useEffect } from 'react'
+import { GlobalErrorBoundary, RouteErrorBoundary } from './components/ErrorBoundary'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/auth/LoginPage'
 import RegisterPage from './pages/auth/RegisterPage'
@@ -43,7 +44,7 @@ export default function App() {
   useEffect(() => { applyTheme() }, [applyTheme])
 
   return (
-    <>
+    <GlobalErrorBoundary>
       <Routes>
         {/* Public marketing/auth routes. /login + /register are gated on
             PublicOnlyRoute so a logged-in user is bounced into the app. */}
@@ -65,7 +66,11 @@ export default function App() {
           }
         />
 
-        {/* Authenticated app. */}
+        {/* Authenticated app. Each leaf route is wrapped in
+            RouteErrorBoundary so a render error in /bids/:id doesn't
+            blank out /knowledge or /settings. The boundary catches the
+            error, renders an inline retry card, and the user can still
+            navigate away via the Layout chrome. */}
         <Route
           path="/"
           element={
@@ -74,17 +79,52 @@ export default function App() {
             </ProtectedRoute>
           }
         >
-          <Route path="bids" element={<BidsPage />} />
-          <Route path="bids/:id" element={<BidWorkspace />} />
-          <Route path="bids/:id/export" element={<ExportPage />} />
-          <Route path="knowledge" element={<KnowledgePage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route
+            path="bids"
+            element={
+              <RouteErrorBoundary>
+                <BidsPage />
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
+            path="bids/:id"
+            element={
+              <RouteErrorBoundary>
+                <BidWorkspace />
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
+            path="bids/:id/export"
+            element={
+              <RouteErrorBoundary>
+                <ExportPage />
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
+            path="knowledge"
+            element={
+              <RouteErrorBoundary>
+                <KnowledgePage />
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
+            path="settings"
+            element={
+              <RouteErrorBoundary>
+                <SettingsPage />
+              </RouteErrorBoundary>
+            }
+          />
         </Route>
 
         {/* Anything else: send to landing. */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <ToastContainer />
-    </>
+    </GlobalErrorBoundary>
   )
 }

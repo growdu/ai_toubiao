@@ -20,6 +20,8 @@ type fakeBillingService struct {
 	setBudgetFn     func(ctx context.Context, month string, limitCents int64) (*model.Budget, error)
 	addTxFn         func(ctx context.Context, req *model.AddTransactionRequest) (*model.Transaction, error)
 	getTxFn         func(ctx context.Context, limit int) ([]*model.Transaction, error)
+	checkoutFn      func(ctx context.Context, req *model.CheckoutRequest) (*model.CheckoutResult, error)
+	getPlanFn       func(ctx context.Context) (string, error)
 	lastSetMonth    string
 	lastSetLimit    int64
 	lastGetTxLimit  int
@@ -38,6 +40,12 @@ func (f *fakeBillingService) AddTransaction(ctx context.Context, req *model.AddT
 func (f *fakeBillingService) GetTransactions(ctx context.Context, limit int) ([]*model.Transaction, error) {
 	f.lastGetTxLimit = limit
 	return f.getTxFn(ctx, limit)
+}
+func (f *fakeBillingService) Checkout(ctx context.Context, req *model.CheckoutRequest) (*model.CheckoutResult, error) {
+	return f.checkoutFn(ctx, req)
+}
+func (f *fakeBillingService) GetCurrentPlan(ctx context.Context) (string, error) {
+	return f.getPlanFn(ctx)
 }
 
 type billingRig struct {
@@ -58,6 +66,12 @@ func newBillingRig() *billingRig {
 		},
 		getTxFn: func(context.Context, int) ([]*model.Transaction, error) {
 			return []*model.Transaction{{ID: uuid.New(), Provider: "anthropic"}}, nil
+		},
+		checkoutFn: func(_ context.Context, req *model.CheckoutRequest) (*model.CheckoutResult, error) {
+			return &model.CheckoutResult{TenantID: uuid.New(), Plan: req.PlanID}, nil
+		},
+		getPlanFn: func(context.Context) (string, error) {
+			return "free", nil
 		},
 	}
 	return &billingRig{svc: fs, h: &Handlers{
@@ -134,5 +148,22 @@ func TestBilling_GetTransactions_InvalidLimitFallsBackToDefault(t *testing.T) {
 	// the route is registered and we get a non-404 response.
 	if w.Code == http.StatusNotFound {
 		t.Errorf("status = 404, want != 404 (route should be registered)")
+	}
+}
+func TestBilling_Checkout_RouteRegistered(t *testing.T) {
+	r := newBillingRig()
+	w := r.do(http.MethodPost, "/api/v1/billing/checkout", map[string]any{"plan_id": "pro"})
+	// Without tenant context the handler returns 401; the point is the
+	// route is registered (not 404).
+	if w.Code == http.StatusNotFound {
+		t.Errorf("status = 404, want != 404 (checkout route should be registered)")
+	}
+}
+
+func TestBilling_Plan_RouteRegistered(t *testing.T) {
+	r := newBillingRig()
+	w := r.do(http.MethodGet, "/api/v1/billing/plan", nil)
+	if w.Code == http.StatusNotFound {
+		t.Errorf("status = 404, want != 404 (plan route should be registered)")
 	}
 }

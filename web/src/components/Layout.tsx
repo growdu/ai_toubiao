@@ -88,12 +88,12 @@ export default function Layout() {
   const initials = (userId || 'U').slice(0, 1).toUpperCase()
 
   return (
-    <div className="min-h-screen flex bg-ink-50">
+    <div className="min-h-screen flex bg-ink-50 dark:bg-ink-900">
       {/* Sidebar */}
       <aside className="w-64 shrink-0 bg-ink-900 text-white flex flex-col">
         {/* Brand */}
         <div className="px-5 py-5 border-b border-white/5">
-          <div className="flex items-center gap-2.5">
+          <Link to="/bids" className="flex items-center gap-2.5 group">
             <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
               <defs>
                 <linearGradient id="sidebar-grad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
@@ -106,10 +106,10 @@ export default function Layout() {
               <circle cx="22" cy="22" r="2" fill="white" fillOpacity="0.95" />
             </svg>
             <div className="leading-tight">
-              <div className="text-sm font-bold tracking-tight">AI 标书系统</div>
+              <div className="text-sm font-bold tracking-tight group-hover:text-white transition-colors">AI 标书系统</div>
               <div className="text-[10px] uppercase tracking-wider text-white/40 font-medium">Bid Composer</div>
             </div>
-          </div>
+          </Link>
         </div>
 
         {/* Nav */}
@@ -127,7 +127,7 @@ export default function Layout() {
           </button>
           <div className="px-2 mb-2 text-[10px] uppercase tracking-wider text-white/30 font-semibold">主菜单</div>
           {navItems.map((item) => {
-            const active = location.pathname.startsWith(item.path)
+            const active = location.pathname === item.path || location.pathname.startsWith(item.path + '/')
             return (
               <Link
                 key={item.path}
@@ -166,8 +166,8 @@ export default function Layout() {
           <div className="flex items-center justify-end px-1">
             <ThemeToggle variant="cycle" surface="dark" />
           </div>
-          <div className="flex items-center gap-3 px-2 py-2 rounded-lg">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-700 flex items-center justify-center text-sm font-semibold text-white shrink-0">
+          <div className="flex items-center gap-3 px-2 py-2 rounded-lg bg-white/5">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-700 flex items-center justify-center text-sm font-semibold text-white shrink-0 shadow-pop">
               {initials}
             </div>
             <div className="min-w-0 flex-1">

@@ -17,6 +17,8 @@ type fakeStore struct {
 	updateBudgetFn      func(ctx context.Context, b *model.Budget) error
 	addTransactionFn    func(ctx context.Context, req *model.AddTransactionRequest) (*model.Transaction, error)
 	getTransactionsFn   func(ctx context.Context, limit int) ([]*model.Transaction, error)
+	updateTenantPlanFn  func(ctx context.Context, plan string) error
+	getTenantPlanFn     func(ctx context.Context) (string, error)
 }
 
 func (f *fakeStore) GetOrCreateBudget(ctx context.Context, month string) (*model.Budget, error) {
@@ -30,6 +32,12 @@ func (f *fakeStore) AddTransaction(ctx context.Context, req *model.AddTransactio
 }
 func (f *fakeStore) GetTransactions(ctx context.Context, limit int) ([]*model.Transaction, error) {
 	return f.getTransactionsFn(ctx, limit)
+}
+func (f *fakeStore) UpdateTenantPlan(ctx context.Context, plan string) error {
+	return f.updateTenantPlanFn(ctx, plan)
+}
+func (f *fakeStore) GetTenantPlan(ctx context.Context) (string, error) {
+	return f.getTenantPlanFn(ctx)
 }
 
 func ctxWithTenant() context.Context {
@@ -262,5 +270,56 @@ func TestGetTransactions_LimitTen_PassedThrough(t *testing.T) {
 	}
 	if len(txs) != 1 {
 		t.Errorf("txs len = %d, want 1", len(txs))
+	}
+}
+func TestCheckout_ValidPlan_CallsUpdateTenantPlan(t *testing.T) {
+	var gotPlan string
+	st := &fakeStore{
+		updateTenantPlanFn: func(_ context.Context, plan string) error {
+			gotPlan = plan
+			return nil
+		},
+	}
+	svc := NewBillingService(st)
+
+	res, err := svc.Checkout(ctxWithTenant(), &model.CheckoutRequest{PlanID: "pro"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPlan != "pro" {
+		t.Errorf("plan passed to store = %q, want %q", gotPlan, "pro")
+	}
+	if res.Plan != "pro" {
+		t.Errorf("result plan = %q, want %q", res.Plan, "pro")
+	}
+	if res.TenantID == uuid.Nil {
+		t.Error("result tenant id is nil")
+	}
+}
+
+func TestCheckout_InvalidPlan_ReturnsError(t *testing.T) {
+	st := &fakeStore{}
+	svc := NewBillingService(st)
+
+	_, err := svc.Checkout(ctxWithTenant(), &model.CheckoutRequest{PlanID: "platinum"})
+	if err == nil {
+		t.Fatal("expected error for invalid plan, got nil")
+	}
+}
+
+func TestGetCurrentPlan_ReturnsStoreValue(t *testing.T) {
+	st := &fakeStore{
+		getTenantPlanFn: func(_ context.Context) (string, error) {
+			return "enterprise", nil
+		},
+	}
+	svc := NewBillingService(st)
+
+	plan, err := svc.GetCurrentPlan(ctxWithTenant())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan != "enterprise" {
+		t.Errorf("plan = %q, want %q", plan, "enterprise")
 	}
 }

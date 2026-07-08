@@ -17,8 +17,12 @@ type Enqueuer interface {
 	// EnqueueChaptersForBid loads all chapter specs for a bid job and
 	// dispatches a content-generation task for each.
 	EnqueueChaptersForBid(ctx context.Context, workflowID, bidJobID, tenantID uuid.UUID) error
-	// EnqueueChapter dispatches a content-generation task for a single chapter.
-	EnqueueChapter(ctx context.Context, workflowID, bidJobID, tenantID, chapterID uuid.UUID, chapterTitle string) error
+	// EnqueueChapter dispatches a content-generation task for a single
+	// chapter. customPrompt is an optional per-chapter user instruction
+	// appended to the LLM user message (frontend's ChapterInspector
+	// "提示词" tab). Empty string = "no custom prompt" — the worker
+	// falls back to its default prompt template.
+	EnqueueChapter(ctx context.Context, workflowID, bidJobID, tenantID, chapterID uuid.UUID, chapterTitle, customPrompt string) error
 	// EnqueueAudit dispatches the compliance-audit task.
 	EnqueueAudit(ctx context.Context, workflowID, bidJobID, tenantID uuid.UUID) error
 	// EnqueueExport dispatches the document-export task.
@@ -35,7 +39,7 @@ func (noopEnqueuer) EnqueueOutline(context.Context, uuid.UUID, uuid.UUID, uuid.U
 func (noopEnqueuer) EnqueueChaptersForBid(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
 	return nil
 }
-func (noopEnqueuer) EnqueueChapter(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) error {
+func (noopEnqueuer) EnqueueChapter(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, string) error {
 	return nil
 }
 func (noopEnqueuer) EnqueueAudit(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {

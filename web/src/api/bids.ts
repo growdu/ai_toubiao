@@ -32,6 +32,9 @@ export interface ChapterSpec {
   writing_style: string
   priority: string
   status: string
+  approved_at?: string
+  approved_by?: string
+  rejection_reason?: string
 }
 
 export interface ChapterContent {
@@ -85,20 +88,46 @@ export const bidsApi = {
   updateChapter: (bidId: string, chapterId: string, data: UpdateChapterRequest) =>
     api.put<{ data: any }>(`/bids/${bidId}/chapters/${chapterId}`, data),
 
+  // Approval state — frontend tracks it in the chapter's status field.
+  // The backend exposes approve/reject endpoints (see approveChapter and
+  // rejectChapter below). A chapter with status='approved' has been
+  // human-vetted and is allowed to flow into the audit step.
+  approveChapter: (bidId: string, chapterId: string) =>
+    api.post<{ data: { id: string; status: string; approved_at: string } }>(
+      `/bids/${bidId}/chapters/${chapterId}/approve`, {}),
+  rejectChapter: (bidId: string, chapterId: string, reason?: string) =>
+    api.post<{ data: { id: string; status: string } }>(
+      `/bids/${bidId}/chapters/${chapterId}/reject`, { reason: reason || '' }),
+  reorderOutline: (bidId: string, ordered: Array<{ id: string; parent_id?: string | null }>) =>
+    api.post<{ data: { ok: true } }>(`/bids/${bidId}/outline/reorder`, { ordered }),
+
   deleteChapter: (bidId: string, chapterId: string) =>
     api.delete<{ data: any }>(`/bids/${bidId}/chapters/${chapterId}`),
 
   // Save chapter content (user edit)
-  saveChapterContent: (bidId: string, chapterId: string, contentText: string) =>
-    api.put<{ data: ChapterContent }>(`/bids/${bidId}/chapters/${chapterId}/content`, { content_text: contentText }),
+  //
+  // We send `expected_version` so the backend can reject stale saves
+  // with 409 VERSION_CONFLICT — guards against two browser tabs
+  // silently clobbering each other. The frontend catches 409 in
+  // BidWorkspace.saveContentMutation and re-reads + prompts the user.
+  saveChapterContent: (bidId: string, chapterId: string, contentText: string, expectedVersion?: number) =>
+    api.put<{ data: ChapterContent }>(`/bids/${bidId}/chapters/${chapterId}/content`, {
+      content_text: contentText,
+      ...(expectedVersion !== undefined ? { expected_version: expectedVersion } : {}),
+    }),
 
   // Save RFP material text
   saveMaterial: (bidId: string, materialText: string) =>
     api.put<{ data: { status: string } }>(`/bids/${bidId}/material`, { material_text: materialText }),
 
   // Chapter generation
-  generateChapter: (bidId: string, chapterId: string) =>
-    api.post<{ data: { chapter_id: string; status: string; message: string } }>(`/bids/${bidId}/chapters/${chapterId}/generate`),
+  // `prompt` is an optional per-chapter user instruction surfaced by
+  // ChapterInspector "提示词" tab. The backend forwards it to the LLM
+  // as an explicit user-message section so the generated content
+  // reflects what the user asked for. Empty string = no custom prompt.
+  generateChapter: (bidId: string, chapterId: string, prompt?: string) =>
+    api.post<{ data: { chapter_id: string; status: string; message: string } }>(`/bids/${bidId}/chapters/${chapterId}/generate`,
+      prompt ? { prompt } : {}),
 
   // Chapter content
   getChapterContent: (bidId: string, chapterId: string) =>

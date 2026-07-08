@@ -26,6 +26,8 @@ type billingService interface {
 	SetBudget(ctx context.Context, month string, limitCents int64) (*model.Budget, error)
 	AddTransaction(ctx context.Context, req *model.AddTransactionRequest) (*model.Transaction, error)
 	GetTransactions(ctx context.Context, limit int) ([]*model.Transaction, error)
+	Checkout(ctx context.Context, req *model.CheckoutRequest) (*model.CheckoutResult, error)
+	GetCurrentPlan(ctx context.Context) (string, error)
 }
 
 type Handlers struct {
@@ -49,6 +51,8 @@ func (h *Handlers) Routes() http.Handler {
 		r.Post("/budget", h.setBudget)
 		r.Post("/transactions", h.addTransaction)
 		r.Get("/transactions", h.getTransactions)
+		r.Post("/checkout", h.checkout)
+		r.Get("/plan", h.getCurrentPlan)
 	})
 
 	return r
@@ -137,6 +141,46 @@ func (h *Handlers) getTransactions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": txs})
+}
+
+// POST /api/v1/billing/checkout
+func (h *Handlers) checkout(w http.ResponseWriter, r *http.Request) {
+	rid := logger.RequestIDFrom(r.Context())
+	if _, err := tenant.FromContext(r.Context()); err != nil {
+		httperr.Unauthorized(w, rid)
+		return
+	}
+
+	var req model.CheckoutRequest
+	if err := readJSON(r.Body, &req); err != nil {
+		httperr.InvalidInput(w, rid, "invalid JSON", nil)
+		return
+	}
+
+	result, err := h.Service.Checkout(r.Context(), &req)
+	if err != nil {
+		h.Log.Error("checkout", slog.String("err", err.Error()))
+		httperr.InvalidInput(w, rid, err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
+// GET /api/v1/billing/plan
+func (h *Handlers) getCurrentPlan(w http.ResponseWriter, r *http.Request) {
+	rid := logger.RequestIDFrom(r.Context())
+	if _, err := tenant.FromContext(r.Context()); err != nil {
+		httperr.Unauthorized(w, rid)
+		return
+	}
+
+	plan, err := h.Service.GetCurrentPlan(r.Context())
+	if err != nil {
+		h.Log.Error("get current plan", slog.String("err", err.Error()))
+		httperr.InternalError(w, rid)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"plan": plan}})
 }
 
 // ---- helpers ----

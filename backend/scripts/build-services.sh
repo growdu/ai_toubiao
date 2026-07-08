@@ -1,5 +1,5 @@
 #!/bin/bash
-# build-services.sh — compile all 10 Go services into static binaries.
+# build-services.sh — compile all 11 Go services into static binaries.
 #
 # Why this script exists:
 #   * The host does NOT have Go installed (we run the compiler in a
@@ -49,6 +49,7 @@ SERVICES=(
   template-svc
   billing-svc
   notify-svc
+  docgen-svc
 )
 
 # If the user passed a service name on the CLI, narrow the list.

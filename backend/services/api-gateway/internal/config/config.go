@@ -18,10 +18,15 @@ type Config struct {
 	DBDSN           string
 
 	// Upstream service addresses (set by env, defaults match docker-compose).
-	ProjectSvcURL  string
-	DocumentSvcURL string
-	WorkflowSvcURL string
+	ProjectSvcURL   string
+	DocumentSvcURL  string
+	WorkflowSvcURL  string
 	KnowledgeSvcURL string
+	DocgenSvcURL    string
+	AuditSvcURL     string
+	TemplateSvcURL  string
+	BillingSvcURL   string
+	NotifySvcURL    string
 }
 
 func Load() (*Config, error) {
@@ -36,6 +41,11 @@ func Load() (*Config, error) {
 		DocumentSvcURL:  getEnv("DOCUMENT_SVC_URL", "http://localhost:8082"),
 		WorkflowSvcURL:  getEnv("WORKFLOW_SVC_URL", "http://localhost:8083"),
 		KnowledgeSvcURL: getEnv("KNOWLEDGE_SVC_URL", "http://localhost:8086"),
+		DocgenSvcURL:    getEnv("DOCGEN_SVC_URL", "http://localhost:8090"),
+		AuditSvcURL:     getEnv("AUDIT_SVC_URL", "http://localhost:8095"),
+		TemplateSvcURL:  getEnv("TEMPLATE_SVC_URL", "http://localhost:8096"),
+		BillingSvcURL:   getEnv("BILLING_SVC_URL", "http://localhost:8097"),
+		NotifySvcURL:    getEnv("NOTIFY_SVC_URL", "http://localhost:8098"),
 	}
 
 	if c.JWTSecret == "" {
