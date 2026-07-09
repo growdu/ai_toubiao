@@ -8,6 +8,8 @@
 //   POST /api/v1/docgen/assemble   { bid_package_id, format } → { download_url }
 //   GET  /api/v1/docgen/download/:id  → serves the generated .docx file
 //   POST /api/v1/docgen/render        { chapters } → { download_url }  (external integration)
+//   POST /api/v1/docgen/learn         { chapters, industry } → { pattern_id, quality_score }
+//   GET  /api/v1/docgen/patterns       ?industry=X&rfp_type=Y → { patterns[] }
 //   GET  /healthz                  → { status: ok }
 package main
 
@@ -19,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -88,10 +91,11 @@ func (tm *TaskManager) Update(t *Task) {
 // ---- 服务 ----
 
 type Server struct {
-	store  *store.SQLiteStore
-	llm    llm.Client
-	tasks  *TaskManager
-	log    *slog.Logger
+	store   *store.SQLiteStore
+	llm     llm.Client
+	tasks   *TaskManager
+	log     *slog.Logger
+	learner *learner.Learner
 }
 
 func newServer() (*Server, error) {
@@ -141,10 +145,11 @@ func newServer() (*Server, error) {
 	client = llm.NewRetryClient(client, 3, log)
 
 	return &Server{
-		store: st,
-		llm:   client,
-		tasks: NewTaskManager(),
-		log:   log,
+		store:   st,
+		llm:     client,
+		tasks:   NewTaskManager(),
+		log:     log,
+		learner: learner.New(st, log),
 	}, nil
 }
 
@@ -286,6 +291,109 @@ func (s *Server) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task)
 }
 
+// handleLearn accepts a completed bid's result (chapters + metadata)
+// and feeds it to the learner, which extracts a reusable BidPattern
+// and updates the Prompt Bandit posterior. This is the feedback loop
+// that lets the system improve over time.
+//
+// POST /api/v1/docgen/learn
+//   { "chapters": [{"title","content","word_count"}],
+//     "industry": "IT", "rfp_type": "货物", "label": "won" }
+func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Chapters []struct {
+			Title     string `json:"title"`
+			Content   string `json:"content"`
+			WordCount int    `json:"word_count"`
+		} `json:"chapters"`
+		Industry string `json:"industry"`
+		RFPType  string `json:"rfp_type"`
+		Label    string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if len(req.Chapters) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "chapters is required"})
+		return
+	}
+
+	// Build a minimal BidPackage from the external data.
+	pkg := &core.BidPackage{
+		ID:        uuid.New(),
+		RFPID:     uuid.New(),
+		OutlineID: uuid.New(),
+		Label:     req.Label,
+		CreatedAt: time.Now(),
+	}
+	for _, ch := range req.Chapters {
+		wc := ch.WordCount
+		if wc == 0 {
+			wc = len([]rune(ch.Content))
+		}
+		chapterID := uuid.New()
+		pkg.Chapters = append(pkg.Chapters, core.Chapter{
+			Spec: core.ChapterSpec{ID: chapterID, Title: ch.Title},
+			Content: core.ChapterContent{
+				ID:        uuid.New(),
+				ChapterID: chapterID,
+				Markdown:  ch.Content,
+				WordCount: wc,
+			},
+		})
+	}
+
+	// Build a minimal RFPProfile.
+	profile := &core.RFPProfile{
+		ID:       uuid.New(),
+		Industry: req.Industry,
+		RFPType:  req.RFPType,
+	}
+
+	// Run the learner.
+	if err := s.learner.Learn(r.Context(), pkg, profile); err != nil {
+		s.log.Error("learn: failed", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "learn failed: " + err.Error()})
+		return
+	}
+
+	s.log.Info("learn: pattern saved", "chapters", len(req.Chapters), "quality", pkg.QualityScore)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "learned",
+		"quality_score": pkg.QualityScore,
+		"pattern_id":    pkg.PatternID,
+	})
+}
+
+// handlePatterns retrieves historical bid patterns matching the given
+// industry/RFP type. workflow-svc's planner can use these as reference
+// when generating a new outline.
+//
+// GET /api/v1/docgen/patterns?industry=X&rfp_type=Y&top_k=5
+func (s *Server) handlePatterns(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	industry := q.Get("industry")
+	rfpType := q.Get("rfp_type")
+	topK := 5
+	if v := q.Get("top_k"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			topK = n
+		}
+	}
+
+	patterns, err := s.learner.RetrievePatterns(r.Context(), industry, rfpType, topK)
+	if err != nil {
+		s.log.Warn("patterns: retrieve failed", "err", err)
+		patterns = nil // graceful: return empty list
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"patterns": patterns,
+		"count":    len(patterns),
+	})
+}
+
 // handleRender accepts chapter data from an external source (e.g.
 // workflow-svc), renders any mermaid code blocks into images, and
 // assembles a richly-formatted .docx. This is the integration point
@@ -334,12 +442,17 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 
-	// Set up the mermaid renderer for code-block rendering.
+	// Set up renderers for code-block rendering.
 	mmdcPath := os.Getenv("MMDC_PATH")
 	if mmdcPath == "" {
 		mmdcPath = "mmdc"
 	}
+	pythonPath := os.Getenv("PYTHON_PATH")
+	if pythonPath == "" {
+		pythonPath = "python3"
+	}
 	mermaidRenderer := &illustrator.MermaidRenderer{MmdcPath: mmdcPath, LLM: s.llm}
+	chartRenderer := &illustrator.DataChartRenderer{PythonPath: pythonPath, LLM: s.llm}
 
 	for idx, ch := range req.Chapters {
 		level := ch.Level
@@ -349,7 +462,7 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 		content := ch.Content
 
 		// Extract and render mermaid code blocks.
-		content, figs := s.renderMermaidBlocks(r.Context(), content, idx, mermaidRenderer, theme)
+		content, figs := s.renderFigureBlocks(r.Context(), content, idx, mermaidRenderer, chartRenderer, theme)
 		pkg.Figures = append(pkg.Figures, figs...)
 
 		chapterID := uuid.New()
@@ -396,12 +509,12 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// renderMermaidBlocks scans markdown for ```mermaid ... ``` fenced code
-// blocks, renders each to PNG via the illustrator, and replaces the
-// block with a [!figure:mermaid caption=...] placeholder that the
-// assembler recognises. Rendered illustrations are returned so the
+// renderFigureBlocks scans markdown for ```mermaid and ```chart fenced
+// code blocks, renders each to PNG via the appropriate renderer, and
+// replaces the block with a [!figure:ID caption=...] placeholder that
+// the assembler recognises. Rendered illustrations are returned so the
 // caller can attach them to the BidPackage.
-func (s *Server) renderMermaidBlocks(ctx context.Context, md string, chapterIdx int, mr *illustrator.MermaidRenderer, theme *core.Theme) (string, []core.Illustration) {
+func (s *Server) renderFigureBlocks(ctx context.Context, md string, chapterIdx int, mr *illustrator.MermaidRenderer, cr *illustrator.DataChartRenderer, theme *core.Theme) (string, []core.Illustration) {
 	var figs []core.Illustration
 	lines := strings.Split(md, "\n")
 	var out strings.Builder
@@ -410,7 +523,9 @@ func (s *Server) renderMermaidBlocks(ctx context.Context, md string, chapterIdx 
 	for i < len(lines) {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "```mermaid" || strings.HasPrefix(trimmed, "```mermaid") {
+		isMermaid := trimmed == "```mermaid" || strings.HasPrefix(trimmed, "```mermaid")
+		isChart := trimmed == "```chart" || strings.HasPrefix(trimmed, "```chart")
+		if isMermaid || isChart {
 			// Collect code block content.
 			var codeLines []string
 			i++
@@ -424,15 +539,19 @@ func (s *Server) renderMermaidBlocks(ctx context.Context, md string, chapterIdx 
 			figCount++
 			caption := fmt.Sprintf("图%d-%d", chapterIdx+1, figCount)
 			specID := uuid.New()
-			spec := core.FigureSpec{
-				ID:      specID,
-				Type:    core.FigureMermaid,
-				Source:  source,
-				Caption: caption,
+
+			var spec core.FigureSpec
+			var ill *core.Illustration
+			var err error
+			if isMermaid {
+				spec = core.FigureSpec{ID: specID, Type: core.FigureMermaid, Source: source, Caption: caption}
+				ill, err = mr.Render(ctx, spec, theme)
+			} else {
+				spec = core.FigureSpec{ID: specID, Type: core.FigureDataChart, Source: source, Caption: caption}
+				ill, err = cr.Render(ctx, spec, theme)
 			}
-			ill, err := mr.Render(ctx, spec, theme)
 			if err != nil {
-				s.log.Warn("render: mermaid failed, using placeholder", "err", err)
+				s.log.Warn("render: figure failed, using placeholder", "type", spec.Type, "err", err)
 				ill = &core.Illustration{
 					ID:            uuid.New(),
 					SpecID:        specID,
@@ -573,6 +692,20 @@ func main() {
 			return
 		}
 		srv.handleTaskStatus(w, r)
+	})
+	mux.HandleFunc("/api/v1/docgen/learn", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		srv.handleLearn(w, r)
+	})
+	mux.HandleFunc("/api/v1/docgen/patterns", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		srv.handlePatterns(w, r)
 	})
 	mux.HandleFunc("/api/v1/docgen/render", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

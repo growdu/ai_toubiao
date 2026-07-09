@@ -71,11 +71,25 @@ func (w *PlannerWorker) Process(ctx context.Context, task *asynq.Task) error {
 		evidenceCtx = "(暂无相关证据)"
 	}
 
+	// 2.5. Query historical patterns from docgen-svc (if available).
+	patternCtx := ""
+	if w.cfg.DocgenURL != "" {
+		patternsClient := NewDocgenPatternsClient(w.cfg.DocgenURL)
+		industry, _ := parseResult["industry"].(string)
+		rfpType, _ := parseResult["rfp_type"].(string)
+		patterns, perr := patternsClient.GetPatterns(ctx, industry, rfpType, 3)
+		if perr == nil && len(patterns) > 0 {
+			best := patterns[0]
+			patternCtx = fmt.Sprintf("\n参考历史大纲（质量评分%.0f，结果%s）：\n%s\n",
+				best.QualityScore, best.Label, best.OutlineTemplate)
+		}
+	}
+
 	// 3. Call router-svc with TaskOutlineGen to generate chapter outline.
 	routerClient := NewRouterClient(w.cfg.RouterURL)
 	messages := []chatMessage{
 		{Role: "system", Content: "你是一个专业的标书编写助手。请根据以下招标解析结果和证据，生成章节大纲。以JSON数组格式返回，每项包含：title(章节标题)、level(层级1-3)、sort_order(排序序号)。只返回JSON数组，不要其他文字。"},
-		{Role: "user", Content: fmt.Sprintf("项目名称：%s\n招标解析：%v\n可用证据：\n%s\n请生成章节大纲：", projectName, parseResult, evidenceCtx)},
+		{Role: "user", Content: fmt.Sprintf("项目名称：%s\n招标解析：%v\n可用证据：\n%s%s\n请生成章节大纲：", projectName, parseResult, evidenceCtx, patternCtx)},
 	}
 	resp, err := routerClient.Chat(ctx, payload.TenantID, "outline_generate", messages, 2048)
 	if err != nil || resp == nil {

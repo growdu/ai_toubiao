@@ -175,3 +175,46 @@ func (c *AuditClient) TriggerAudit(ctx context.Context, bidJobID, tenantID uuid.
 	}
 	return nil
 }
+
+// DocgenPatternsClient queries docgen-svc for historical bid patterns.
+type DocgenPatternsClient struct {
+	baseURL string
+	client  *http.Client
+}
+
+func NewDocgenPatternsClient(baseURL string) *DocgenPatternsClient {
+	return &DocgenPatternsClient{baseURL: baseURL, client: &http.Client{Timeout: 30 * time.Second}}
+}
+
+type docgenPattern struct {
+	Industry        string  `json:"industry"`
+	RFPType         string  `json:"rfp_type"`
+	OutlineTemplate string  `json:"outline_template"`
+	QualityScore    float64 `json:"quality_score"`
+	Label           string  `json:"label"`
+}
+
+// GetPatterns retrieves historical bid patterns from docgen-svc.
+func (c *DocgenPatternsClient) GetPatterns(ctx context.Context, industry, rfpType string, topK int) ([]docgenPattern, error) {
+	url := fmt.Sprintf("%s/api/v1/docgen/patterns?industry=%s&rfp_type=%s&top_k=%d",
+		c.baseURL, industry, rfpType, topK)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("docgen-svc patterns HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Patterns []docgenPattern `json:"patterns"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result.Patterns, nil
+}
