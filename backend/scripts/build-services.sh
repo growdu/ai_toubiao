@@ -75,10 +75,15 @@ fi
 
 echo "== building ${SERVICES[*]} =="
 fail=0
+# Map service name to source directory when they differ (e.g. docgen-svc -> doc-gen)
+declare -A SRC_DIR=(
+  [docgen-svc]=doc-gen
+)
 for svc in "${SERVICES[@]}"; do
+  src_dir="${SRC_DIR[$svc]:-$svc}"
   echo "--- $svc ---"
   if ! docker exec "$BUILDER_NAME" \
-      sh -c "cd /src/services/$svc && CGO_ENABLED=0 go build -o /out/$svc ./cmd/$svc" 2>&1 | tail -3; then
+      sh -c "cd /src/services/$src_dir && CGO_ENABLED=0 go build -o /out/$svc ./cmd/$svc" 2>&1 | tail -3; then
     echo "  FAIL: $svc"
     fail=$((fail + 1))
     continue
