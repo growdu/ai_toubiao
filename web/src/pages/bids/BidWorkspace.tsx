@@ -785,7 +785,7 @@ export default function BidWorkspace() {
               chapter={selectedChapter}
               content={content}
               bidStatus={bid?.status || ''}
-              onGenerate={() => generateMutation.mutate(selectedChapter.id)}
+              onGenerate={() => generateMutation.mutate({ chapterId: selectedChapter.id })}
               generating={generateMutation.isPending}
               onApprove={() => approveMutation.mutate(selectedChapter.id)}
               onReject={() => {

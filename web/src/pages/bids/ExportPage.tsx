@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { bidsApi } from '../../api/bids'
+import { docgenApi } from '../../api/docgen'
+import { useMutation } from '@tanstack/react-query'
 import { toast } from '../../lib/toast'
 import { Button, Card, ProgressBar, StatusBadge } from '../../components/ui'
 import { BID_STATUS_LABELS, WORKFLOW_STEPS, workflowStepIndex } from './workspace-helpers'
@@ -341,8 +343,107 @@ export default function ExportPage() {
             </div>
           </Card>
         )}
+
+        {/* Learning Feedback - submit completed bid for pattern extraction */}
+        {ready && (
+          <LearningFeedback bidId={id!} chapters={chapters} />
+        )}
       </div>
     </div>
+  )
+}
+
+/** Learning feedback section: after export, submit the bid result for
+ *  pattern extraction + Bandit update so future outlines improve. */
+function LearningFeedback({ bidId, chapters }: { bidId: string; chapters: any[] }) {
+  const [label, setLabel] = useState<'won' | 'lost' | 'draft'>('draft')
+  const [submitted, setSubmitted] = useState(false)
+
+  const learnMut = useMutation({
+    mutationFn: async () => {
+      // Fetch content for each chapter in parallel.
+      const contents = await Promise.all(
+        chapters.map(ch => bidsApi.getChapterContent(bidId, ch.id).then(r => r.data.data).catch(() => null))
+      )
+      const validContents = contents.filter(Boolean)
+      if (validContents.length === 0) {
+        throw new Error('无法获取章节内容')
+      }
+      return docgenApi.learn({
+        chapters: validContents.map((c: any) => ({
+          title: chapters.find(ch => ch.id === c.chapter_spec_id)?.title || '',
+          content: c.content_text || '',
+          word_count: c.word_count || 0,
+        })),
+        label,
+      })
+    },
+    onSuccess: (res) => {
+      const qs = res.data.quality_score?.toFixed(1) || '?'
+      toast.success('学习反馈已提交', `质量评分: ${qs}`)
+      setSubmitted(true)
+    },
+    onError: (e: any) => {
+      toast.error('提交失败', e?.message || '请稍后重试')
+    },
+  })
+
+  if (submitted) {
+    return (
+      <Card className="bg-green-50/50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30 mt-6">
+        <div className="flex items-center gap-3">
+          <div className="shrink-0 w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 flex items-center justify-center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+          </div>
+          <div>
+            <h4 className="font-semibold text-green-900 dark:text-green-200 text-sm">学习反馈已提交</h4>
+            <p className="text-xs text-green-800 dark:text-green-300 mt-0.5">系统已从本次标书中提取模式，未来大纲生成将参考此经验</p>
+          </div>
+        </div>
+      </Card>
+    )
+  }
+
+  return (
+    <Card className="mt-6">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-ink-800 dark:text-ink-100">学习反馈</h3>
+        <p className="text-xs text-ink-500 dark:text-ink-400 mt-1">提交本次标书结果，帮助系统优化未来的大纲生成</p>
+      </div>
+      <div className="flex items-center gap-2 mb-4">
+        {([
+          { id: 'won', label: '中标', tone: 'green' },
+          { id: 'lost', label: '落标', tone: 'red' },
+          { id: 'draft', label: '草稿', tone: 'gray' },
+        ] as const).map(opt => (
+          <button
+            key={opt.id}
+            onClick={() => setLabel(opt.id)}
+            className={[
+              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              label === opt.id
+                ? opt.tone === 'green' ? 'bg-green-500 text-white'
+                  : opt.tone === 'red' ? 'bg-red-500 text-white'
+                  : 'bg-ink-500 text-white'
+                : 'bg-ink-100 dark:bg-ink-700 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-600',
+            ].join(' ')}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      <Button
+        variant="secondary"
+        size="sm"
+        loading={learnMut.isPending}
+        onClick={() => learnMut.mutate()}
+        leftIcon={!learnMut.isPending ? (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+        ) : undefined}
+      >
+        提交学习反馈
+      </Button>
+    </Card>
   )
 }
 
