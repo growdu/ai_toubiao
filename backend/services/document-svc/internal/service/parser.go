@@ -34,9 +34,13 @@ func NewParserService(s *store.Store, st storage.Storage, log *slog.Logger, rout
 // For async=true, it returns immediately after updating status.
 // For async=false, it blocks until parsing completes.
 func (p *ParserService) Parse(ctx context.Context, docID uuid.UUID, async bool) (*model.ParseResult, error) {
-	// TODO: In Phase 1.2, this will call the actual parser (PyMuPDF/unioffice + LLM).
-	// For now, return a mock result so the API surface is complete.
 	p.log.Info("parse requested", slog.String("doc_id", docID.String()), slog.Bool("async", async))
+
+	// Fetch current document to get its version for optimistic concurrency.
+	doc, err := p.store.Get(ctx, docID)
+	if err != nil {
+		return nil, fmt.Errorf("get document: %w", err)
+	}
 
 	// Update document status to parsing
 	now := time.Now()
@@ -47,9 +51,9 @@ func (p *ParserService) Parse(ctx context.Context, docID uuid.UUID, async bool) 
 	updateReq := &model.UpdateRequest{
 		Status:      statusPtr(model.StatusParsing),
 		ParseStatus: ps,
-		Version:     1, // TODO: fetch current version
+		Version:     doc.Version,
 	}
-	_, err := p.store.Update(ctx, docID, updateReq)
+	updated, err := p.store.Update(ctx, docID, updateReq)
 	if err != nil {
 		return nil, fmt.Errorf("update status to parsing: %w", err)
 	}
@@ -59,14 +63,14 @@ func (p *ParserService) Parse(ctx context.Context, docID uuid.UUID, async bool) 
 		return nil, nil
 	}
 
-	// Synchronous parsing (dev mode placeholder)
+	// Synchronous parsing (text extraction + LLM structured extraction)
 	result, err := p.doParse(ctx, docID)
 	if err != nil {
 		finished := time.Now()
 		p.store.Update(ctx, docID, &model.UpdateRequest{
 			Status:      statusPtr(model.StatusFailed),
 			ParseStatus: &model.ParseStatus{Progress: 0, Error: err.Error(), FinishedAt: &finished},
-			Version:     2, // TODO
+			Version:     updated.Version,
 		})
 		return nil, err
 	}
@@ -78,7 +82,7 @@ func (p *ParserService) Parse(ctx context.Context, docID uuid.UUID, async bool) 
 		Status:      statusPtr(model.StatusParsed),
 		ParseStatus: &model.ParseStatus{Progress: 100, FinishedAt: &finished},
 		Metadata:    metadata,
-		Version:     2, // TODO
+		Version:     updated.Version,
 	})
 
 	return result, nil

@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // validateRegisterInput is pure (no DB / bcrypt) so we can unit-test
@@ -149,5 +152,51 @@ func TestIsUniqueViolation(t *testing.T) {
 	}
 	if isUniqueViolation(errors.New("some random error"), "tenants_slug_key") {
 		t.Error("unrelated error should not match")
+	}
+}
+
+func TestRefreshTokens_ValidToken_IssuesNewPair(t *testing.T) {
+	svc := New(nil, "test-secret", time.Hour, 24*time.Hour)
+	user := &User{
+		ID:       uuid.New(),
+		TenantID: uuid.New(),
+		Role:     "owner",
+	}
+
+	_, refresh, _, err := svc.IssueTokens(user)
+	if err != nil {
+		t.Fatalf("IssueTokens: %v", err)
+	}
+
+	access2, refresh2, ttl, err := svc.RefreshTokens(refresh)
+	if err != nil {
+		t.Fatalf("RefreshTokens: %v", err)
+	}
+	if access2 == "" || refresh2 == "" {
+		t.Error("expected non-empty tokens")
+	}
+	if ttl != int(time.Hour.Seconds()) {
+		t.Errorf("ttl = %d, want %d", ttl, int(time.Hour.Seconds()))
+	}
+
+	// New access token should verify.
+	claims, err := svc.Verify(access2)
+	if err != nil {
+		t.Fatalf("Verify new access: %v", err)
+	}
+	if claims.UserID != user.ID.String() {
+		t.Errorf("user_id = %s, want %s", claims.UserID, user.ID.String())
+	}
+}
+
+func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
+	svc := New(nil, "test-secret", time.Hour, 24*time.Hour)
+	user := &User{ID: uuid.New(), TenantID: uuid.New(), Role: "owner"}
+
+	access, _, _, _ := svc.IssueTokens(user)
+
+	// An access token should NOT be accepted as a refresh token.
+	if _, _, _, err := svc.RefreshTokens(access); err == nil {
+		t.Error("expected error when using access token as refresh token")
 	}
 }

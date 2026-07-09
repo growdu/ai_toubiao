@@ -167,6 +167,35 @@ func (s *Service) Verify(tokenStr string) (*Claims, error) {
 	return c, nil
 }
 
+// RefreshTokens validates a refresh token and issues a fresh access +
+// refresh token pair. The old refresh token remains valid until its
+// natural expiry (no revocation list yet); rotating it client-side is
+// the caller's responsibility.
+func (s *Service) RefreshTokens(refreshToken string) (access, refresh string, expiresIn int, err error) {
+	c := &Claims{}
+	t, err := jwt.ParseWithClaims(refreshToken, c, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return s.jwtSecret, nil
+	})
+	if err != nil || !t.Valid {
+		return "", "", 0, errors.New("invalid refresh token")
+	}
+	if c.Type != "refresh" {
+		return "", "", 0, errors.New("not a refresh token")
+	}
+	uid, err := uuid.Parse(c.UserID)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("parse user id: %w", err)
+	}
+	tid, err := uuid.Parse(c.TenantID)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("parse tenant id: %w", err)
+	}
+	return s.IssueTokens(&User{ID: uid, TenantID: tid, Role: c.Role})
+}
+
 // RegisterRequest is the input to Register. We validate fields server-side
 // even though the front-end also checks — a CLI / curl user shouldn't be
 // able to skip client validation.

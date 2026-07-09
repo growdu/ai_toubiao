@@ -6,6 +6,7 @@
 //   POST /api/v1/docgen/generate   { material_dir, rfp_path, options } → { task_id }
 //   GET  /api/v1/docgen/tasks/:id  → { status, progress, output_path, issues }
 //   POST /api/v1/docgen/assemble   { bid_package_id, format } → { download_url }
+//   GET  /api/v1/docgen/download/:id  → serves the generated .docx file
 //   GET  /healthz                  → { status: ok }
 package main
 
@@ -284,6 +285,29 @@ func (s *Server) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task)
 }
 
+// handleDownload serves the output file of a completed task.
+// The path parameter is a task ID (UUID), not a filesystem path, so
+// there is no path-traversal risk - we look up the task and serve
+// whatever OutputPath it recorded.
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimPrefix(r.URL.Path, "/api/v1/docgen/download/")
+	if taskID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "task id required"})
+		return
+	}
+	task, ok := s.tasks.Get(taskID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "task not found: " + taskID})
+		return
+	}
+	if task.OutputPath == "" {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "task has no output file", "status": task.Status})
+		return
+	}
+	s.log.Info("download", "task_id", taskID, "path", task.OutputPath)
+	http.ServeFile(w, r, task.OutputPath)
+}
+
 // handleAssemble 重新组装一个已完成任务的标书包为指定格式文档。
 // 目前支持 word(.docx)；pdf 需 LibreOffice headless，暂未实现(501)。
 func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
@@ -341,8 +365,11 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("assemble done", "task_id", id, "output", path)
+	// Store the assembled path so the download endpoint can serve it.
+	task.OutputPath = path
+	s.tasks.Update(task)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"download_url": path,
+		"download_url": "/api/v1/docgen/download/" + id,
 		"format":       format,
 		"task_id":      id,
 	})
@@ -375,6 +402,9 @@ func main() {
 			return
 		}
 		srv.handleTaskStatus(w, r)
+	})
+	mux.HandleFunc("/api/v1/docgen/download/", func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDownload(w, r)
 	})
 	mux.HandleFunc("/api/v1/docgen/assemble", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

@@ -9,7 +9,7 @@
 //
 // Routing table:
 //   POST /api/v1/auth/login         -> handled locally (DB lookup)
-//   POST /api/v1/auth/refresh       -> handled locally (TODO: revocation list)
+//   POST /api/v1/auth/refresh       -> handled locally (verify refresh, issue new pair)
 //   /api/v1/projects/*              -> project-svc
 //   /api/v1/documents/*             -> document-svc
 //   /api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
@@ -417,18 +417,16 @@ func refreshHandler(svc *auth.Service) http.HandlerFunc {
 			return
 		}
 
-		// For now, accept any refresh token signed by us (verified loosely).
-		// In production, maintain a refresh-token table for revocation.
-		// Reuse IssueTokens by re-verifying the refresh token.
-		// (Implementation simplified: we accept the existing user identity from the refresh claim.)
-		_ = svc // TODO proper refresh-token revocation list
-
-		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, http.StatusNotImplemented, map[string]any{
-			"error": map[string]any{
-				"code":    "NOT_IMPLEMENTED",
-				"message": "refresh token flow is TODO (need revocation list)",
-			},
+		access, refresh, ttl, err := svc.RefreshTokens(req.RefreshToken)
+		if err != nil {
+			httperr.Unauthorized(w, rid)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"access_token":  access,
+			"refresh_token": refresh,
+			"expires_in":    ttl,
+			"token_type":    "Bearer",
 		})
 	}
 }

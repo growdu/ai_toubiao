@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/bidwriter/services/billing-svc/internal/model"
 	"github.com/bidwriter/shared/pkg/tenant"
@@ -63,7 +64,7 @@ func (s *Store) UpdateBudget(ctx context.Context, b *model.Budget) error {
 // AddTransaction records a new transaction and updates budget spent.
 func (s *Store) AddTransaction(ctx context.Context, req *model.AddTransactionRequest) (*model.Transaction, error) {
 	// Get or create current month budget
-	month := "2026-06" // TODO: derive from current date
+	month := time.Now().UTC().Format("2006-01")
 	budget, err := s.GetOrCreateBudget(ctx, month)
 	if err != nil {
 		return nil, err
