@@ -160,9 +160,10 @@ func TestFigurePlaceholderXML_Placeholder(t *testing.T) {
 	a := &Assembler{}
 	pkg := &core.BidPackage{ID: uuid.New()}
 	imageIdx := 0
+	figIdx := 0
 
 	// 测试无渲染结果的占位符
-	xml := a.figurePlaceholderXML("[!figure:mermaid caption=流程图]", pkg, &imageIdx)
+	xml := a.figurePlaceholderXML("[!figure:mermaid caption=流程图]", pkg, &imageIdx, &figIdx)
 	if !strings.Contains(xml, "图表占位") {
 		t.Fatal("expected placeholder text for unrendered figure")
 	}
@@ -183,7 +184,8 @@ func TestFigurePlaceholderXML_Table(t *testing.T) {
 		},
 	}
 	imageIdx := 0
-	xml := a.figurePlaceholderXML("[!figure:table caption=报价表]", pkg, &imageIdx)
+	figIdx := 0
+	xml := a.figurePlaceholderXML("[!figure:table caption=报价表]", pkg, &imageIdx, &figIdx)
 	if !strings.Contains(xml, "<w:tbl>") {
 		t.Fatal("expected table OOXML in figure placeholder")
 	}

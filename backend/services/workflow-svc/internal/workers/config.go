@@ -9,4 +9,5 @@ type Config struct {
 	KnowledgeURL string // knowledge-svc base URL
 	DocumentURL  string // document-svc base URL
 	AuditURL     string // audit-svc base URL
+	DocgenURL    string // docgen-svc base URL (empty = disabled)
 }

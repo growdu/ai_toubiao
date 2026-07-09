@@ -85,8 +85,9 @@ func (a *Assembler) buildDocumentXML(pkg *core.BidPackage, theme *core.Theme) st
 
 	// 各章节
 	imageIdx := 0
+	figIdx := 0
 	for _, ch := range pkg.Chapters {
-		sb.WriteString(a.chapterXML(ch, theme, pkg, &imageIdx))
+		sb.WriteString(a.chapterXML(ch, theme, pkg, &imageIdx, &figIdx))
 	}
 
 	// 文档结尾标记
@@ -107,7 +108,7 @@ func (a *Assembler) titlePageXML(pkg *core.BidPackage) string {
 }
 
 // chapterXML 将一个章节的 Markdown 转为 OOXML。
-func (a *Assembler) chapterXML(ch core.Chapter, theme *core.Theme, pkg *core.BidPackage, imageIdx *int) string {
+func (a *Assembler) chapterXML(ch core.Chapter, theme *core.Theme, pkg *core.BidPackage, imageIdx *int, figIdx *int) string {
 	var sb strings.Builder
 	md := ch.Content.Markdown
 
@@ -144,7 +145,7 @@ func (a *Assembler) chapterXML(ch core.Chapter, theme *core.Theme, pkg *core.Bid
 
 		// 图片占位符 [!figure:type caption=...]
 		if strings.HasPrefix(trimmed, "[!figure:") {
-			sb.WriteString(a.figurePlaceholderXML(trimmed, pkg, imageIdx))
+			sb.WriteString(a.figurePlaceholderXML(trimmed, pkg, imageIdx, figIdx))
 			continue
 		}
 
@@ -194,7 +195,7 @@ func (a *Assembler) chapterXML(ch core.Chapter, theme *core.Theme, pkg *core.Bid
 }
 
 // figurePlaceholderXML 处理图表占位符，嵌入图片或表格。
-func (a *Assembler) figurePlaceholderXML(placeholder string, pkg *core.BidPackage, imageIdx *int) string {
+func (a *Assembler) figurePlaceholderXML(placeholder string, pkg *core.BidPackage, imageIdx *int, figIdx *int) string {
 	// 解析 [!figure:type caption=xxx]
 	re := regexp.MustCompile(`\[!figure:(\w+)\s+caption=(.+?)\]`)
 	matches := re.FindStringSubmatch(placeholder)
@@ -204,11 +205,14 @@ func (a *Assembler) figurePlaceholderXML(placeholder string, pkg *core.BidPackag
 	figType := matches[1]
 	caption := matches[2]
 
-	// 查找对应的渲染结果
-	for _, fig := range pkg.Figures {
+	// 查找对应的渲染结果（按顺序消费，避免多个图表重复使用同一个）
+	for idx := *figIdx; idx < len(pkg.Figures); idx++ {
+		fig := pkg.Figures[idx]
 		if fig.Status != "ok" {
+			*figIdx = idx + 1
 			continue
 		}
+		*figIdx = idx + 1
 		// 如果是表格类型，插入 OOXML 表格
 		if fig.OOXML != "" && figType == "table" {
 			var sb strings.Builder

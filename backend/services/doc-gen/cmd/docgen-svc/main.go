@@ -7,6 +7,7 @@
 //   GET  /api/v1/docgen/tasks/:id  → { status, progress, output_path, issues }
 //   POST /api/v1/docgen/assemble   { bid_package_id, format } → { download_url }
 //   GET  /api/v1/docgen/download/:id  → serves the generated .docx file
+//   POST /api/v1/docgen/render        { chapters } → { download_url }  (external integration)
 //   GET  /healthz                  → { status: ok }
 package main
 
@@ -285,6 +286,176 @@ func (s *Server) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task)
 }
 
+// handleRender accepts chapter data from an external source (e.g.
+// workflow-svc), renders any mermaid code blocks into images, and
+// assembles a richly-formatted .docx. This is the integration point
+// between the workflow-svc pipeline and docgen-svc's assembler.
+//
+// POST /api/v1/docgen/render
+//   { "title": "投标文件", "format": "word",
+//     "chapters": [{"title","content","level","sort_order"}] }
+func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title    string `json:"title"`
+		Format   string `json:"format"`
+		Chapters []struct {
+			Title     string `json:"title"`
+			Content   string `json:"content"`
+			Level     int    `json:"level"`
+			SortOrder int    `json:"sort_order"`
+		} `json:"chapters"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if len(req.Chapters) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "chapters is required"})
+		return
+	}
+	format := strings.ToLower(req.Format)
+	if format == "" {
+		format = "word"
+	}
+	if format != "word" {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "format not supported: " + format})
+		return
+	}
+	if req.Title == "" {
+		req.Title = "投标文件"
+	}
+
+	// Build a BidPackage from the external chapter data.
+	theme := core.DefaultTheme()
+	pkg := &core.BidPackage{
+		ID:        uuid.New(),
+		RFPID:     uuid.New(),
+		OutlineID: uuid.New(),
+		CreatedAt: time.Now(),
+	}
+
+	// Set up the mermaid renderer for code-block rendering.
+	mmdcPath := os.Getenv("MMDC_PATH")
+	if mmdcPath == "" {
+		mmdcPath = "mmdc"
+	}
+	mermaidRenderer := &illustrator.MermaidRenderer{MmdcPath: mmdcPath, LLM: s.llm}
+
+	for idx, ch := range req.Chapters {
+		level := ch.Level
+		if level == 0 {
+			level = 1
+		}
+		content := ch.Content
+
+		// Extract and render mermaid code blocks.
+		content, figs := s.renderMermaidBlocks(r.Context(), content, idx, mermaidRenderer, theme)
+		pkg.Figures = append(pkg.Figures, figs...)
+
+		chapterID := uuid.New()
+		pkg.Chapters = append(pkg.Chapters, core.Chapter{
+			Spec: core.ChapterSpec{
+				ID:    chapterID,
+				Title: ch.Title,
+				Level: level,
+				Order: ch.SortOrder,
+			},
+			Content: core.ChapterContent{
+				ID:        uuid.New(),
+				ChapterID: chapterID,
+				Markdown:  content,
+			},
+		})
+	}
+
+	// Assemble the document.
+	outPath := fmt.Sprintf("标书_render_%s.docx", time.Now().Format("20060102_150405"))
+	pkg.OutputPath = outPath
+	asm := assembler.New(s.log)
+	path, err := asm.Assemble(r.Context(), pkg, theme)
+	if err != nil {
+		s.log.Error("render: assemble failed", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "assemble failed: " + err.Error()})
+		return
+	}
+
+	// Track via task manager so the download endpoint can serve it.
+	task := s.tasks.Create()
+	task.Status = "done"
+	task.OutputPath = path
+	now := time.Now()
+	task.FinishedAt = &now
+	s.tasks.Update(task)
+
+	s.log.Info("render: done", "task_id", task.ID, "chapters", len(req.Chapters), "figures", len(pkg.Figures))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"download_url": "/api/v1/docgen/download/" + task.ID,
+		"task_id":      task.ID,
+		"chapters":     len(req.Chapters),
+		"figures":      len(pkg.Figures),
+	})
+}
+
+// renderMermaidBlocks scans markdown for ```mermaid ... ``` fenced code
+// blocks, renders each to PNG via the illustrator, and replaces the
+// block with a [!figure:mermaid caption=...] placeholder that the
+// assembler recognises. Rendered illustrations are returned so the
+// caller can attach them to the BidPackage.
+func (s *Server) renderMermaidBlocks(ctx context.Context, md string, chapterIdx int, mr *illustrator.MermaidRenderer, theme *core.Theme) (string, []core.Illustration) {
+	var figs []core.Illustration
+	lines := strings.Split(md, "\n")
+	var out strings.Builder
+	i := 0
+	figCount := 0
+	for i < len(lines) {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "```mermaid" || strings.HasPrefix(trimmed, "```mermaid") {
+			// Collect code block content.
+			var codeLines []string
+			i++
+			for i < len(lines) && strings.TrimSpace(lines[i]) != "```" {
+				codeLines = append(codeLines, lines[i])
+				i++
+			}
+			i++ // skip closing ```
+
+			source := strings.Join(codeLines, "\n")
+			figCount++
+			caption := fmt.Sprintf("图%d-%d", chapterIdx+1, figCount)
+			specID := uuid.New()
+			spec := core.FigureSpec{
+				ID:      specID,
+				Type:    core.FigureMermaid,
+				Source:  source,
+				Caption: caption,
+			}
+			ill, err := mr.Render(ctx, spec, theme)
+			if err != nil {
+				s.log.Warn("render: mermaid failed, using placeholder", "err", err)
+				ill = &core.Illustration{
+					ID:            uuid.New(),
+					SpecID:        specID,
+					Status:        "placeholder",
+					FallbackChain: "render_failed->placeholder",
+				}
+			} else {
+				ill.SpecID = specID
+			}
+			figs = append(figs, *ill)
+			// Replace code block with figure placeholder.
+			out.WriteString(fmt.Sprintf("[!figure:%s caption=%s]\n", specID.String(), caption))
+			continue
+		}
+		out.WriteString(line)
+		if i < len(lines)-1 {
+			out.WriteString("\n")
+		}
+		i++
+	}
+	return out.String(), figs
+}
+
 // handleDownload serves the output file of a completed task.
 // The path parameter is a task ID (UUID), not a filesystem path, so
 // there is no path-traversal risk - we look up the task and serve
@@ -402,6 +573,13 @@ func main() {
 			return
 		}
 		srv.handleTaskStatus(w, r)
+	})
+	mux.HandleFunc("/api/v1/docgen/render", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		srv.handleRender(w, r)
 	})
 	mux.HandleFunc("/api/v1/docgen/download/", func(w http.ResponseWriter, r *http.Request) {
 		srv.handleDownload(w, r)

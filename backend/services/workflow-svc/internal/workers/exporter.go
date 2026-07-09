@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"strings"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -56,11 +57,24 @@ func (w *ExportWorker) Process(ctx context.Context, task *asynq.Task) error {
 		return fmt.Errorf("no chapters found for bid_job %s", payload.BidJobID)
 	}
 
-	// 2. Call document-svc /api/v1/export to render the document.
-	downloadURL, err := w.callExportAPI(ctx, payload, chapters)
-	if err != nil {
-		w.log.Warn("export: document-svc call failed", slog.Any("error", err))
-		return fmt.Errorf("export api: %w", err)
+	// 2. Render the document. Try docgen-svc first (richer formatting +
+	// mermaid rendering); fall back to document-svc if it's unavailable.
+	var downloadURL string
+	if w.cfg.DocgenURL != "" {
+		dl, err := w.callDocgenRender(ctx, payload, chapters)
+		if err != nil {
+			w.log.Warn("export: docgen-svc render failed, falling back to document-svc", slog.Any("error", err))
+		} else {
+			downloadURL = dl
+		}
+	}
+	if downloadURL == "" {
+		dl, err := w.callExportAPI(ctx, payload, chapters)
+		if err != nil {
+			w.log.Warn("export: document-svc call failed", slog.Any("error", err))
+			return fmt.Errorf("export api: %w", err)
+		}
+		downloadURL = dl
 	}
 
 	// 3. Update workflow state: exporting → done.
@@ -173,6 +187,52 @@ func (w *ExportWorker) callExportAPI(ctx context.Context, payload ExportPayload,
 		return "", fmt.Errorf("decode export response: %w", err)
 	}
 	return wrapper.Data.DownloadURL, nil
+}
+
+// callDocgenRender posts chapter data to docgen-svc's /render endpoint
+// for rich document assembly (title page, mermaid rendering, better
+// formatting). Returns the download URL.
+func (w *ExportWorker) callDocgenRender(ctx context.Context, payload ExportPayload, chapters []chapterExportData) (string, error) {
+	reqBody := map[string]any{
+		"title":   "投标文件",
+		"format":  payload.Format,
+		"chapters": chapters,
+	}
+	buf, _ := json.Marshal(reqBody)
+	url := w.cfg.DocgenURL + "/api/v1/docgen/render"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", payload.TenantID.String())
+
+	client := &http.Client{Timeout: 180 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("docgen-svc HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		DownloadURL string `json:"download_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode docgen response: %w", err)
+	}
+	if result.DownloadURL == "" {
+		return "", fmt.Errorf("docgen-svc returned empty download_url")
+	}
+	// Resolve relative URL to absolute via the docgen-svc base.
+	if strings.HasPrefix(result.DownloadURL, "/") {
+		result.DownloadURL = w.cfg.DocgenURL + result.DownloadURL
+	}
+	return result.DownloadURL, nil
 }
 
 // EnqueueExport enqueues a document export task.

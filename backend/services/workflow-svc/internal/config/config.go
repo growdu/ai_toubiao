@@ -15,6 +15,7 @@ type Config struct {
 	KnowledgeURL   string
 	DocumentURL    string
 	AuditURL       string
+	DocgenURL      string
 	LibreOfficeBin string
 }
 
@@ -28,6 +29,7 @@ func Load() (*Config, error) {
 		KnowledgeURL:   getEnv("KNOWLEDGE_URL", "http://localhost:8086"),
 		DocumentURL:    getEnv("DOCUMENT_URL", "http://localhost:8082"),
 		AuditURL:       getEnv("AUDIT_URL", "http://localhost:8087"),
+		DocgenURL:      getEnv("DOCGEN_URL", ""),
 		LibreOfficeBin: getEnv("LIBREOFFICE_BIN", ""),
 	}
 	if c.DSN == "" {

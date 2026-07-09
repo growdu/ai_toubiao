@@ -69,6 +69,7 @@ func run() error {
 		KnowledgeURL: cfg.KnowledgeURL,
 		DocumentURL:  cfg.DocumentURL,
 		AuditURL:     cfg.AuditURL,
+		DocgenURL:    cfg.DocgenURL,
 	}
 
 	// Create the Asynq client for enqueuing tasks from HTTP handlers.
