@@ -14,115 +14,52 @@ import ExportPage from './pages/bids/ExportPage'
 import KnowledgePage from './pages/knowledge/KnowledgePage'
 import SettingsPage from './pages/settings/SettingsPage'
 
+const PUBLIC_LANDING = '/welcome'
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { token } = useAuthStore()
   if (!token) {
-    // Send unauthenticated visitors to the marketing landing page rather
-    // than straight to /login — gives them a chance to read what the
-    // product does before being asked to authenticate. The landing page
-    // itself has a "登录" button that jumps to /login.
-    return <Navigate to="/" replace />
+    return <Navigate to={PUBLIC_LANDING} replace />
   }
   return <>{children}</>
 }
 
-// PublicOnlyRoute: only renders if the visitor is NOT logged in. Used for
-// /login and /register so a returning user doesn't see them again after
-// signing in (they'd be bounced back to /bids).
 const PublicOnlyRoute = ({ children }: { children: React.ReactNode }) => {
   const { token } = useAuthStore()
   if (token) {
-    return <Navigate to="/bids" replace />
+    return <Navigate to='/bids' replace />
   }
   return <>{children}</>
+}
+
+function LoginElement() {
+  return <PublicOnlyRoute><LoginPage /></PublicOnlyRoute>
+}
+function RegisterElement() {
+  return <PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>
+}
+function ProtectedElement() {
+  return <ProtectedRoute><Layout /></ProtectedRoute>
 }
 
 export default function App() {
   const applyTheme = useThemeStore(s => s.apply)
-
-  // Ensure the resolved theme is applied after hydration on first mount.
   useEffect(() => { applyTheme() }, [applyTheme])
-
   return (
     <GlobalErrorBoundary>
       <Routes>
-        {/* Public marketing/auth routes. /login + /register are gated on
-            PublicOnlyRoute so a logged-in user is bounced into the app. */}
-        <Route path="/" element={<LandingPage />} />
-        <Route
-          path="/login"
-          element={
-            <PublicOnlyRoute>
-              <LoginPage />
-            </PublicOnlyRoute>
-          }
-        />
-        <Route
-          path="/register"
-          element={
-            <PublicOnlyRoute>
-              <RegisterPage />
-            </PublicOnlyRoute>
-          }
-        />
-
-        {/* Authenticated app. Each leaf route is wrapped in
-            RouteErrorBoundary so a render error in /bids/:id doesn't
-            blank out /knowledge or /settings. The boundary catches the
-            error, renders an inline retry card, and the user can still
-            navigate away via the Layout chrome. */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }
-        >
-          <Route
-            path="bids"
-            element={
-              <RouteErrorBoundary>
-                <BidsPage />
-              </RouteErrorBoundary>
-            }
-          />
-          <Route
-            path="bids/:id"
-            element={
-              <RouteErrorBoundary>
-                <BidWorkspace />
-              </RouteErrorBoundary>
-            }
-          />
-          <Route
-            path="bids/:id/export"
-            element={
-              <RouteErrorBoundary>
-                <ExportPage />
-              </RouteErrorBoundary>
-            }
-          />
-          <Route
-            path="knowledge"
-            element={
-              <RouteErrorBoundary>
-                <KnowledgePage />
-              </RouteErrorBoundary>
-            }
-          />
-          <Route
-            path="settings"
-            element={
-              <RouteErrorBoundary>
-                <SettingsPage />
-              </RouteErrorBoundary>
-            }
-          />
+        <Route path='/welcome' element={<LandingPage />} />
+        <Route path='/login' element={<LoginElement />} />
+        <Route path='/register' element={<RegisterElement />} />
+        <Route path='/bids' element={<ProtectedElement />}>
+          <Route path='bids' element={<RouteErrorBoundary><BidsPage /></RouteErrorBoundary>} />
+          <Route path='bids/:id' element={<RouteErrorBoundary><BidWorkspace /></RouteErrorBoundary>} />
+          <Route path='bids/:id/export' element={<RouteErrorBoundary><ExportPage /></RouteErrorBoundary>} />
+          <Route path='knowledge' element={<RouteErrorBoundary><KnowledgePage /></RouteErrorBoundary>} />
+          <Route path='settings' element={<RouteErrorBoundary><SettingsPage /></RouteErrorBoundary>} />
         </Route>
-
-        {/* Anything else: send to landing. */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path='/' element={<Navigate to={PUBLIC_LANDING} replace />} />
+        <Route path='*' element={<Navigate to={PUBLIC_LANDING} replace />} />
       </Routes>
       <ToastContainer />
     </GlobalErrorBoundary>
