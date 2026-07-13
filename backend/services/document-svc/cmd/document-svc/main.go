@@ -33,8 +33,10 @@ import (
 	"github.com/bidwriter/services/document-svc/internal/service"
 	"github.com/bidwriter/services/document-svc/internal/store"
 	"github.com/bidwriter/services/document-svc/internal/storage"
+	"github.com/bidwriter/services/document-svc/internal/workers"
 	"github.com/bidwriter/shared/pkg/db"
 	sharedlogger "github.com/bidwriter/shared/pkg/logger"
+	"github.com/hibiken/asynq"
 )
 
 func main() {
@@ -93,10 +95,27 @@ func run() error {
 		return fmt.Errorf("unknown STORAGE_KIND: %s", cfg.StorageKind)
 	}
 
+	parserSvc := service.NewParserService(store.New(pool), st, log, cfg.RouterURL)
+
+	// Wire the parser enqueuer. When REDIS_ADDR is set we use the real
+	// Asynq client; otherwise the parser falls back to inline execution
+	// (the nopParseEnqueuer inside ParserService). The worker server is
+	// only started when there is somewhere to dequeue from.
+	var asynqClient *asynq.Client
+	if cfg.RedisAddr != "" {
+		asynqClient = asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisAddr})
+		parserSvc.WithEnqueuer(workers.NewAsynqEnqueuer(asynqClient))
+		log.Info("parser queue: enabled",
+			slog.String("redis_addr", cfg.RedisAddr),
+			slog.Int("asynq_concurrency", cfg.AsynqConcurrency))
+	} else {
+		log.Warn("parser queue: disabled (REDIS_ADDR not set); parse runs inline")
+	}
+
 	h := &api.Handlers{
 		Store:    store.New(pool),
 		Storage:  st,
-		Parser:   service.NewParserService(store.New(pool), st, log, cfg.RouterURL),
+		Parser:   parserSvc,
 		Exporter: service.NewExporterService(store.New(pool), st, log),
 		Log:      log,
 	}
@@ -121,6 +140,25 @@ func run() error {
 			serverErr <- err
 		}
 	}()
+
+	// Optional: start the Asynq worker server in the background so the
+	// parser queue drains while the HTTP server is up. Skip when no
+	// Redis is configured.
+	if cfg.RedisAddr != "" {
+		workerDone := make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			if err := workers.Serve(ctx, log, workers.NewParserWorker(parserSvc, log), cfg.RedisAddr, cfg.AsynqConcurrency); err != nil {
+				log.Error("parser worker exited", slog.String("err", err.Error()))
+			}
+		}()
+		defer func() {
+			<-workerDone
+			if asynqClient != nil {
+				asynqClient.Close()
+			}
+		}()
+	}
 
 	select {
 	case err := <-serverErr:

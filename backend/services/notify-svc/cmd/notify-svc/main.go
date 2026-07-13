@@ -95,9 +95,21 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func mustEnv(key string) string {
+// requireEnvOrLog reads a required env var and returns an error
+// instead of panicking. It is not currently called by the startup path
+// because notify-svc uses env-with-fallback for every setting, but it
+// stays here as a safe seam for future strictness — callers that need
+// hard-fail behaviour should do:
+//
+//     val, err := requireEnvOrLog("FOO")
+//     if err != nil { return fmt.Errorf("config: %w", err) }
+//
+// We deliberately do NOT panic in this helper because config loaders
+// that panic during request-time (rather than startup) take the whole
+// process down for what is usually a single bad request.
+func requireEnvOrLog(key string) (string, error) {
 	if v := os.Getenv(key); v != "" {
-		return v
+		return v, nil
 	}
-	panic("required env var not set: " + key)
+	return "", errors.New("required env var not set: " + key)
 }

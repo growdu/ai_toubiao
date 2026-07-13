@@ -7,6 +7,68 @@ in `YYYY-MM-DD`.
 ## [Unreleased]
 
 ### Added
+- **Async document parser** (document-svc): the `POST /api/v1/documents/{id}/parse`
+  endpoint now enqueues onto a new `parser-q` Asynq queue when `async=true`,
+  removing the `TODO` in `internal/service/parser.go:62`. The HTTP handler
+  updates the document row to `StatusParsing` and returns 202 immediately,
+  the worker picks the task up, runs the same `doParse` logic, and writes
+  the result back to `document.metadata`. Wired through a small
+  `ParseEnqueuer` interface so dev mode (no `REDIS_ADDR`) keeps the old
+  inline path with a no-op enqueuer. New env vars: `REDIS_ADDR`,
+  `ASYNQ_CONCURRENCY` (default 4). New `internal/workers/` package with
+  the task type, payload, asynq client + server wiring, and a slog
+  adapter that emits structured logs.
+- **PDF export from docgen-svc**: the `POST /api/v1/docgen/assemble`
+  endpoint now accepts `format: "pdf"` and converts the freshly
+  assembled `.docx` via a new `internal/pdfexport` package that wraps
+  LibreOffice (`soffice --headless --convert-to pdf`). Returns 503 with
+  an actionable hint when LibreOffice is not installed; the
+  `/api/v1/docgen/download/:id` endpoint now also sets the right
+  `Content-Type` for `.pdf` vs `.docx`. Configure with `PDF_SOFFICE_BIN`
+  (default: PATH lookup).
+- **Graceful tenant-missing errors in billing-svc**: `GetTenantPlan`
+  and `UpdateTenantPlan` used to call `mustTenantID(ctx)` which would
+  panic and crash the process if the auth middleware ever let a
+  request through without a tenant. Both now return a typed Go error
+  (`fmt.Errorf("billing: tenant missing from context: %w", err)`) so
+  the HTTP layer can translate it to 401 cleanly. The dead-code
+  `mustTenantID` helper has been deleted. New tests
+  (`internal/store/billing_store_test.go`) lock in the no-panic
+  contract.
+
+### Fixed
+- **CI markdown lint glob negation**: removed the inline `globs:`
+  block from `.github/workflows/ci.yml` so the action picks up
+  `.markdownlint-cli2.jsonc`, which already excludes both `node_modules/`
+  and `.git/`. The previous inline pattern only negated top-level
+  `node_modules` and pulled in ~32k Vite/pnpm-licensed MD files from
+  `web/node_modules/`.
+- **CI mermaid lint headless Chrome**: added an explicit
+  `apt-get install -y chromium-browser chromium-codecs-ffmpeg-extra`
+  step and pinned `MERMAID_LINT_CHROME=/usr/bin/chromium-browser` on
+  the GitHub-hosted runner, which doesn't ship with Chrome by default.
+- **notify-svc dead-code `mustEnv` panic helper**: the function was
+  declared but never called; renamed to `requireEnvOrLog` and changed
+  to return `(value, error)` so a future caller can decide between
+  fail-fast and degraded-mode without taking the whole process down.
+  New `cmd/notify-svc/main_test.go` pins the no-panic contract.
+
+### Test counts
+- Backend: **433** Test functions across **62** `_test.go` files
+  (was 425 / 59).
+- Web: **109/109** vitest pass, tsc clean.
+
+### Notes
+- `document-svc` now depends on `github.com/hibiken/asynq v0.24.1`
+  (matches `workflow-svc`). The `start-stack.sh` already injects
+  `REDIS_ADDR` for `workflow-svc`; `document-svc` reads the same env
+  var so no additional wiring is needed on the supervisor.
+- `docgen-svc` will start even without LibreOffice installed; only
+  `format=pdf` requests are 503. word-only callers are unaffected.
+- The known CI red (`docs/KNOWN_ISSUES.md`) should now flip green
+  after these fixes propagate.
+
+### Added
 - **Hybrid KB retrieval** (vector + BM25 + RRF):
   - `kb_store.SearchChunksBM25` uses `plainto_tsquery('simple', ...)`
     so callers can pass natural-language strings; 'simple' config

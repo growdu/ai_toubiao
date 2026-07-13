@@ -58,10 +58,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: DavidAnson/markdownlint-cli2-action@v19
-        with:
-          globs: |
-            **/*.md
-            !node_modules/**/*.md
+        # Inline `globs:` would override .markdownlint-cli2.jsonc and re-introduce
+        # web/node_modules/**/*.md into the lint set (the negation only matches
+        # top-level node_modules). Read config from the project file instead,
+        # which already excludes node_modules and .git.
 
   # ───────────────────────────────────────────────────────────
   # 链接检查（异步执行，不阻塞其他检查）
@@ -95,10 +95,22 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Install Chrome
+        # GitHub-hosted ubuntu-latest 镜像不预装 Chrome；puppeteer-core 启动
+        # 时找不到可执行路径会让 mermaid-lint 直接 exit 2。装一次 chrome
+        # 让 puppeteer-core 用 --no-sandbox + headless='new' 能渲染成功。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            chromium-browser chromium-codecs-ffmpeg-extra
+          which chromium-browser chromium google-chrome || true
+
       - name: Install deps
         run: npm ci
 
       - name: Render mermaid blocks
+        env:
+          MERMAID_LINT_CHROME: /usr/bin/chromium-browser
         run: node tools/mermaid-lint.mjs
 
   # ───────────────────────────────────────────────────────────

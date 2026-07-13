@@ -22,6 +22,11 @@ type Config struct {
 	S3Region     string // 默认 "us-east-1"
 	S3UseSSL     bool   // 默认 false (本地 MinIO 多为 HTTP)
 	RouterURL    string
+	// RedisAddr is the Redis instance used to back the Asynq parser queue.
+	// Empty string disables the worker + enqueue (sync parse only).
+	RedisAddr    string
+	// AsynqConcurrency caps how many parse tasks run at once.
+	AsynqConcurrency int
 }
 
 func Load() (*Config, error) {
@@ -43,6 +48,8 @@ func Load() (*Config, error) {
 		S3Region:    getEnv("MINIO_REGION", "us-east-1"),
 		S3UseSSL:    useSSL,
 		RouterURL:   getEnv("ROUTER_URL", "http://localhost:8083"),
+		RedisAddr:   getEnv("REDIS_ADDR", ""),
+		AsynqConcurrency: getEnvInt("ASYNQ_CONCURRENCY", 4),
 	}
 	if c.DSN == "" {
 		return nil, fmt.Errorf("DB_DSN is required")
@@ -81,4 +88,18 @@ func getEnvBool(k string, def bool) (bool, error) {
 		return false, fmt.Errorf("parse %s=%q: %w", k, v, err)
 	}
 	return b, nil
+}
+
+func getEnvInt(k string, def int) int {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		// 出错时回落到默认值而不是 panic —— 启动期 hard-fail 已在 README
+		// 的运维约束中说明,但配置文件语法错时不应让容器直接崩。
+		return def
+	}
+	return n
 }

@@ -5,7 +5,7 @@
 // 端点：
 //   POST /api/v1/docgen/generate   { material_dir, rfp_path, options } → { task_id }
 //   GET  /api/v1/docgen/tasks/:id  → { status, progress, output_path, issues }
-//   POST /api/v1/docgen/assemble   { bid_package_id, format } → { download_url }
+//   POST /api/v1/docgen/assemble   { bid_package_id, format: "word" | "pdf" } -> { download_url, format, output_path } → { download_url }
 //   GET  /api/v1/docgen/download/:id  → serves the generated .docx file
 //   POST /api/v1/docgen/render        { chapters } → { download_url }  (external integration)
 //   POST /api/v1/docgen/learn         { chapters, industry } → { pattern_id, quality_score }
@@ -36,6 +36,7 @@ import (
 	"github.com/bidwriter/services/doc-gen/internal/ingest"
 	"github.com/bidwriter/services/doc-gen/internal/learner"
 	"github.com/bidwriter/services/doc-gen/internal/llm"
+	"github.com/bidwriter/services/doc-gen/internal/pdfexport"
 	"github.com/bidwriter/services/doc-gen/internal/planner"
 	"github.com/bidwriter/services/doc-gen/internal/store"
 	"github.com/google/uuid"
@@ -91,11 +92,12 @@ func (tm *TaskManager) Update(t *Task) {
 // ---- 服务 ----
 
 type Server struct {
-	store   *store.SQLiteStore
-	llm     llm.Client
-	tasks   *TaskManager
-	log     *slog.Logger
-	learner *learner.Learner
+	store        *store.SQLiteStore
+	llm          llm.Client
+	tasks        *TaskManager
+	log          *slog.Logger
+	learner      *learner.Learner
+	pdfConverter pdfexport.Converter
 }
 
 func newServer() (*Server, error) {
@@ -144,12 +146,25 @@ func newServer() (*Server, error) {
 	}
 	client = llm.NewRetryClient(client, 3, log)
 
+	// PDF converter: prefer explicit PDF_SOFFICE_BIN, fall back to PATH
+	// lookup. When neither is available we still start — the assemble
+	// handler will return 503 on format=pdf, but word-only callers
+	// are unaffected.
+	pdfBin := os.Getenv("PDF_SOFFICE_BIN")
+	conv := pdfexport.New(pdfBin)
+	if conv.Available() {
+		log.Info("PDF converter: enabled")
+	} else {
+		log.Warn("PDF converter: disabled (libreoffice not found); /assemble format=pdf will return 503")
+	}
+
 	return &Server{
-		store:   st,
-		llm:     client,
-		tasks:   NewTaskManager(),
-		log:     log,
-		learner: learner.New(st, log),
+		store:        st,
+		llm:          client,
+		tasks:        NewTaskManager(),
+		log:          log,
+		learner:      learner.New(st, log),
+		pdfConverter: conv,
 	}, nil
 }
 
@@ -595,6 +610,16 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("download", "task_id", taskID, "path", task.OutputPath)
+	// Pick the right Content-Type so curl / browsers / the web client
+	// open the file with the correct handler. http.ServeFile does its
+	// own MIME detection but only from the file's first 512 bytes; for
+	// .pdf / .docx that is usually enough, but explicitly setting it
+	// here keeps the contract obvious for new clients.
+	if strings.HasSuffix(strings.ToLower(task.OutputPath), ".pdf") {
+		w.Header().Set("Content-Type", "application/pdf")
+	} else if strings.HasSuffix(strings.ToLower(task.OutputPath), ".docx") {
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	}
 	http.ServeFile(w, r, task.OutputPath)
 }
 
@@ -635,34 +660,75 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = "word"
 	}
-	if format != "word" {
-		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "format not supported yet: " + format + " (only 'word')"})
+	if format != "word" && format != "pdf" {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "format not supported: " + format + " (only 'word' or 'pdf')"})
 		return
 	}
 
-	outPath := req.OutPath
-	if outPath == "" {
-		outPath = fmt.Sprintf("标书_%s.docx", time.Now().Format("20060102_150405"))
+	// DOCX path: assemble directly into the target file. We always go
+	// through Word first because the source BidPackage is rich with
+	// ooxml-only structures (numbering, custom styles) that would
+	// be lossy to skip.
+	docxPath := req.OutPath
+	if docxPath == "" {
+		docxPath = fmt.Sprintf("标书_%s.docx", time.Now().Format("20060102_150405"))
+	}
+	if !strings.HasSuffix(strings.ToLower(docxPath), ".docx") {
+		docxPath += ".docx"
 	}
 	pkg := task.Result.Package
-	pkg.OutputPath = outPath
+	pkg.OutputPath = docxPath
 
 	asm := assembler.New(s.log)
-	path, err := asm.Assemble(r.Context(), pkg, core.DefaultTheme())
-	if err != nil {
+	if _, err := asm.Assemble(r.Context(), pkg, core.DefaultTheme()); err != nil {
 		s.log.Error("assemble failed", "task_id", id, "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "assemble failed: " + err.Error()})
 		return
 	}
-	s.log.Info("assemble done", "task_id", id, "output", path)
-	// Store the assembled path so the download endpoint can serve it.
-	task.OutputPath = path
+	s.log.Info("assemble done", "task_id", id, "output", docxPath)
+
+	finalPath := docxPath
+	if format == "pdf" {
+		if s.pdfConverter == nil || !s.pdfConverter.Available() {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":     "pdf conversion not available on this host; install libreoffice (soffice) or set PDF_SOFFICE_BIN",
+				"hint":      "apt-get install -y libreoffice",
+				"word_path": docxPath,
+				"task_id":   id,
+			})
+			return
+		}
+		pdfPath := strings.TrimSuffix(docxPath, filepathExt(docxPath)) + ".pdf"
+		if err := s.pdfConverter.ConvertFile(r.Context(), docxPath, pdfPath); err != nil {
+			s.log.Error("pdf convert failed", "task_id", id, "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "pdf conversion failed: " + err.Error(), "word_path": docxPath, "task_id": id})
+			return
+		}
+		finalPath = pdfPath
+		s.log.Info("pdf converted", "task_id", id, "output", pdfPath)
+	}
+
+	// Store the assembled (or converted) path so the download
+	// endpoint serves the right file regardless of format.
+	task.OutputPath = finalPath
 	s.tasks.Update(task)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"download_url": "/api/v1/docgen/download/" + id,
 		"format":       format,
 		"task_id":      id,
+		"output_path":  finalPath,
 	})
+}
+
+// filepathExt returns the lowercase file extension (including the
+// leading dot), or empty string when there is none. Tiny shim so we
+// don't pull in path/filepath for one call.
+func filepathExt(p string) string {
+	i := strings.LastIndex(p, ".")
+	if i < 0 || i == len(p)-1 {
+		return ""
+	}
+	return strings.ToLower(p[i:])
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

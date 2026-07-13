@@ -17,17 +17,52 @@ import (
 	"github.com/google/uuid"
 )
 
+// ParseEnqueuer is the small surface area ParserService needs to push
+// async work onto a queue. Keeping it as an interface (rather than
+// *asynq.Client) lets main inject a no-op in dev mode and lets tests
+// assert that the right payload was enqueued without touching Redis.
+//
+// The package boundary is deliberate: service must not import workers
+// to avoid an import cycle (workers imports service for ParserService).
+type ParseEnqueuer interface {
+	EnqueueParse(ctx context.Context, docID, tenantID uuid.UUID) error
+}
+
+// nopParseEnqueuer is the dev/no-Redis fallback. It returns nil so the
+// HTTP handler still returns 202 to the caller, but the document row
+// stays in StatusParsing forever. Production deployments set REDIS_ADDR
+// and main wires the real AsynqEnqueuer instead.
+type nopParseEnqueuer struct{}
+
+func (nopParseEnqueuer) EnqueueParse(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
 // ParserService handles RFP document parsing.
 type ParserService struct {
 	store        *store.Store
 	storage      storage.Storage
 	log          *slog.Logger
 	routerClient *RouterClient
+	enqueuer     ParseEnqueuer
 }
 
 // NewParserService creates a ParserService.
 func NewParserService(s *store.Store, st storage.Storage, log *slog.Logger, routerURL string) *ParserService {
-	return &ParserService{store: s, storage: st, log: log, routerClient: NewRouterClient(routerURL)}
+	return &ParserService{
+		store:        s,
+		storage:      st,
+		log:          log,
+		routerClient: NewRouterClient(routerURL),
+		enqueuer:     nopParseEnqueuer{},
+	}
+}
+
+// WithEnqueuer swaps the parse enqueuer. Returns the receiver so callers
+// can chain: service.NewParserService(...).WithEnqueuer(realQueue).
+func (p *ParserService) WithEnqueuer(e ParseEnqueuer) *ParserService {
+	if e != nil {
+		p.enqueuer = e
+	}
+	return p
 }
 
 // Parse triggers parsing of a document and returns the structured result.
@@ -59,7 +94,19 @@ func (p *ParserService) Parse(ctx context.Context, docID uuid.UUID, async bool) 
 	}
 
 	if async {
-		// TODO: enqueue to Asynq queue for background processing
+		// Enqueue onto the parser-q Asynq queue. The HTTP handler has
+		// already updated the document row to StatusParsing and the
+		// caller can poll /parse-result for completion.
+		if err := p.enqueuer.EnqueueParse(ctx, docID, doc.TenantID); err != nil {
+			finished := time.Now()
+			p.store.Update(ctx, docID, &model.UpdateRequest{
+				Status:      statusPtr(model.StatusFailed),
+				ParseStatus: &model.ParseStatus{Progress: 0, Error: "enqueue failed: " + err.Error(), FinishedAt: &finished},
+				Version:     updated.Version,
+			})
+			return nil, fmt.Errorf("enqueue parse: %w", err)
+		}
+		p.log.Info("parse enqueued", slog.String("doc_id", docID.String()))
 		return nil, nil
 	}
 
