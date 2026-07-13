@@ -63,11 +63,11 @@ export default function ExportPage() {
     queryFn: () => bidsApi.getOutline(id!),
     enabled: !!id,
   })
-  const chapters = outlineData?.data.data || []
+  const chapters: any[] = Array.isArray(outlineData?.data?.data) ? outlineData!.data!.data! : []
 
   const [showPreview, setShowPreview] = useState(false)
 
-  const bid = data?.data.data
+  const bid = (data?.data?.data ?? null) as any
   const ready = bid?.status === 'done'
   const progress = bid && bid.total_chapters > 0
     ? Math.round((bid.done_chapters / bid.total_chapters) * 100) : 0

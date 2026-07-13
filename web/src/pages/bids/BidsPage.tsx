@@ -40,19 +40,19 @@ export default function BidsPage() {
     queryFn: () => bidsApi.list(),
   })
 
-  const bids: BidJob[] = data?.data.data || []
+  const bids: BidJob[] = Array.isArray(data?.data?.data) ? data!.data!.data! : []
 
   const createMutation = useMutation({
     mutationFn: async (name: string) => {
       const projRes = await apiClient.post('/projects', { name })
-      return bidsApi.create({ project_id: projRes.data.data.id })
+      return bidsApi.create({ project_id: (projRes.data?.data as any).id })
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['bids'] })
       setShowCreate(false)
       setProjectName('')
       toast.success('标书已创建', '正在跳转到工作区…')
-      navigate(`/bids/${res.data.data.id}`)
+      navigate(`/bids/${(res.data?.data as any).id}`)
     },
     onError: (err: any) => {
       toast.error('创建失败', err?.response?.data?.message || '请稍后重试')

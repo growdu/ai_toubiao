@@ -112,7 +112,7 @@ export default function BidWorkspace() {
     refetchIntervalInBackground: false,
     staleTime: 4_000,
   })
-  const bid = bidData?.data.data
+  const bid = (bidData?.data?.data ?? null) as any
 
   const { data: outlineData, isLoading: outlineLoading } = useQuery({
     queryKey: ['outline', id],
@@ -122,7 +122,7 @@ export default function BidWorkspace() {
     refetchIntervalInBackground: false,
     staleTime: 1_000,
   })
-  const chapters = outlineData?.data.data || []
+  const chapters: any[] = Array.isArray(outlineData?.data?.data) ? outlineData!.data!.data! : []
 
   const { data: contentData } = useQuery({
     queryKey: ['chapter-content', id, selectedChapterId],
@@ -134,7 +134,7 @@ export default function BidWorkspace() {
     refetchIntervalInBackground: false,
     staleTime: 1_000,
   })
-  const content = contentData?.data.data || null
+  const content = (contentData?.data?.data ?? null) as any
 
   // Auto-select first chapter on load or when none selected
   useEffect(() => {
@@ -199,7 +199,7 @@ export default function BidWorkspace() {
       // Sticky toast — the version number is informationally
       // important (audit trail) and we want the user to register the
       // change rather than have it flash by in 4 seconds.
-      toast.success('已审核', `章节已标记为已审 · v${res.data.data.approved_at?.slice(0, 16) ?? ''}`, undefined, { sticky: true })
+      toast.success('已审核', `章节已标记为已审 · v${(res.data?.data as any)?.approved_at?.slice(0, 16) ?? ''}`, undefined, { sticky: true })
     },
     onError: (err: any) => toast.error('审核失败', err?.response?.data?.message),
   })
@@ -405,7 +405,7 @@ export default function BidWorkspace() {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['chapter-content', id, selectedChapterId] })
       queryClient.invalidateQueries({ queryKey: ['bid', id] })
-      toast.success('内容已保存', `v${res.data.data.version}`)
+      toast.success('内容已保存', `v${(res.data?.data as any)?.version}`)
     },
     onError: (err: any) => {
       if (err?.isVersionConflict) {

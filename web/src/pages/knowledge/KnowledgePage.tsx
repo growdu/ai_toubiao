@@ -92,7 +92,7 @@ export default function KnowledgePage() {
     onError: (err: any) => toast.error('上传失败', err?.response?.data?.message),
   })
 
-  const materials = data?.data.data ?? []
+  const materials: KBMaterial[] = Array.isArray(data?.data?.data) ? data!.data!.data! : []
 
   const filtered = useMemo(() => {
     let list = materials

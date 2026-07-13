@@ -51,12 +51,12 @@ export default function App() {
         <Route path='/welcome' element={<LandingPage />} />
         <Route path='/login' element={<LoginElement />} />
         <Route path='/register' element={<RegisterElement />} />
-        <Route path='/bids' element={<ProtectedElement />}>
-          <Route path='bids' element={<RouteErrorBoundary><BidsPage /></RouteErrorBoundary>} />
-          <Route path='bids/:id' element={<RouteErrorBoundary><BidWorkspace /></RouteErrorBoundary>} />
-          <Route path='bids/:id/export' element={<RouteErrorBoundary><ExportPage /></RouteErrorBoundary>} />
-          <Route path='knowledge' element={<RouteErrorBoundary><KnowledgePage /></RouteErrorBoundary>} />
-          <Route path='settings' element={<RouteErrorBoundary><SettingsPage /></RouteErrorBoundary>} />
+        <Route element={<ProtectedElement />}>
+          <Route path='/bids' element={<RouteErrorBoundary><BidsPage /></RouteErrorBoundary>} />
+          <Route path='/bids/:id' element={<RouteErrorBoundary><BidWorkspace /></RouteErrorBoundary>} />
+          <Route path='/bids/:id/export' element={<RouteErrorBoundary><ExportPage /></RouteErrorBoundary>} />
+          <Route path='/knowledge' element={<RouteErrorBoundary><KnowledgePage /></RouteErrorBoundary>} />
+          <Route path='/settings' element={<RouteErrorBoundary><SettingsPage /></RouteErrorBoundary>} />
         </Route>
         <Route path='/' element={<Navigate to={PUBLIC_LANDING} replace />} />
         <Route path='*' element={<Navigate to={PUBLIC_LANDING} replace />} />

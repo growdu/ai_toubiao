@@ -203,15 +203,15 @@ function BillingTab() {
   const checkoutMut = useMutation({
     mutationFn: (planId: string) => billingApi.checkout(planId),
     onSuccess: (res) => {
-      toast.success('套餐升级成功', `已切换到 ${PLAN_META[res.data.data.plan]?.label || res.data.data.plan}`)
+      toast.success('套餐升级成功', `已切换到 ${PLAN_META[(res?.data?.data as any)?.plan]?.label || (res?.data?.data as any)?.plan}`)
     },
     onError: (e: any) => {
       toast.error('升级失败', e?.response?.data?.error?.message || '请稍后重试')
     },
   })
 
-  const currentPlan = planData?.data.data.plan || 'free'
-  const budget = budgetData?.data.data
+  const currentPlan = (planData?.data?.data as any)?.plan || 'free'
+  const budget = (budgetData?.data?.data ?? null) as any
   const spentYuan = budget ? (budget.spent_cents / 100).toFixed(2) : '0.00'
   const limitYuan = budget ? (budget.limit_cents / 100).toFixed(2) : '0.00'
   const pct = budget ? Math.round(budget.percent_used) : 0
