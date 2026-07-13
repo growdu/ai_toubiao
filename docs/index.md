@@ -177,3 +177,18 @@ mkdocs build                       # 构建静态站点到 site/
 ## License
 
 Private · 仅供内部使用
+
+---
+
+## 📚 文档导航
+
+| 我想... | 看这个 |
+|---|---|
+| 登录 / 创建标书 / 审稿 / 导出 | [**用户手册**](user-guide.md) |
+| 理解 11 个服务怎么协作 | [**架构详细**](architecture.md) |
+| 看需求基线 / 调研 | [需求规格说明书](requirements-spec.md) · [调研报告](diaoyan.md) |
+| 选型 / 概要设计 | [设计纲要](framework.md) · [技术选型](tech-selection.md) · [概要设计](high-level-design.md) |
+| 部署 / 数据库 / API | [部署架构](deployment.md) · [数据库设计](database.md) · [API 接口规范](api-spec.md) |
+| 测试 / 交付 | [测试策略](testing.md) · [交付文档](delivery.md) |
+| 文档生成模块 | [概览](doc-gen/index.md) · [架构](doc-gen/architecture.md) · [算法](doc-gen/algorithms.md) |
+| 已知问题 | [KNOWN_ISSUES](KNOWN_ISSUES.md) · [CI 与本地开发](ci-and-local-dev.md) |
