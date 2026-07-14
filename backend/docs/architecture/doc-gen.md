@@ -3,7 +3,7 @@
 > AI 标书系统的文档生产内核：输入招标文件 + 企业材料目录，输出可交付的 Word/PDF 标书。
 > 遵循"CLI 优先、内核复用、服务化演进"三原则。
 
-*最后更新：2026-07-07*
+*最后更新：2026-07-14*
 
 ---
 
@@ -87,12 +87,116 @@ backend/services/doc-gen/
 
 ## 6. CLI 命令
 
+`bidgen` 是 doc-gen 的命令行入口（cobra 实现），与 `docgen-svc` 服务共享同一 Pipeline 内核。
+
+### 6.1 构建与安装
+
+`doc-gen` 不在顶层 `SERVICES` 列表内，需单独编译：
+
 ```bash
-bidgen generate <dir> --rfp xxx.pdf --out 标书.docx  # 生成标书
-bidgen index <dir>                                     # 仅建索引
-bidgen learn <dir> --label won --industry IT           # 离线学习
-bidgen report                                          # 查看报告
+cd services/doc-gen && go build -trimpath -o ../../bin/bidgen ./cmd/bidgen
 ```
+
+### 6.2 全局配置
+
+配置文件默认 `~/.bidgen/bidgen.yaml`（可用 `-c` 指定），示例见 `configs/bidgen.yaml`。环境变量优先级高于配置文件：
+
+| 环境变量 | 配置项 | 说明 |
+|---|---|---|
+| `BIDGEN_DB_PATH` | `db_path` | SQLite 路径，默认 `~/.bidgen/bidgen.db` |
+| `BIDGEN_ROUTER_URL` | `router_url` | router-svc 地址，设置后走 router |
+| `LLM_API_KEY` | -（仅 env） | OpenAI 兼容 API key |
+| `LLM_API_BASE` | `api_base` | API base URL |
+| `LLM_MODEL` | `model` | 默认模型 |
+| `LLM_EMBED_MODEL` | `embed_model` | 嵌入模型 |
+| `ANTHROPIC_AUTH_TOKEN` | - | Anthropic 兼容 token（含 MiniMax） |
+| `ANTHROPIC_BASE_URL` | `api_base` | Anthropic base URL |
+| `ANTHROPIC_MODEL` | `model` | Anthropic 模型 |
+
+LLM 后端按以下顺序选择：
+
+1. 设了 `router_url` -> [router-svc](ai-router.md) 客户端
+2. 有 key 且 base 含 `anthropic`（或设了 `ANTHROPIC_AUTH_TOKEN`） -> Anthropic 兼容客户端
+3. 有 key -> OpenAI 兼容直连客户端
+4. 都没有 -> noop（生成将失败）
+
+### 6.3 子命令
+
+#### generate
+
+八步流水线全流程，产出 `.docx` 标书。
+
+```bash
+bidgen generate <材料目录> [flags]
+```
+
+| flag | 说明 | 默认值 |
+|---|---|---|
+| `--rfp` | 招标文件路径，为空时自动检测 | - |
+| `-o, --out` | 输出路径 | 材料目录下 `标书.docx` |
+| `-j, --concurrency` | 章节生成并发数 | 10 |
+| `-b, --budget` | 总字数预算 | 60000 |
+| `--no-illustrate` | 跳过图表渲染 | false |
+| `--no-audit` | 跳过审计 | false |
+| `--no-learn` | 跳过学习 | false |
+
+#### index
+
+仅摄取建索引（增量），不生成文档。
+
+```bash
+bidgen index <材料目录> --rfp 招标文件.pdf
+```
+
+| flag | 说明 |
+|---|---|
+| `--rfp` | 招标文件路径 |
+
+#### learn
+
+离线学习，把历史标书录入模式库（pattern）。
+
+```bash
+bidgen learn <历史标书目录> --label won --industry IT
+```
+
+| flag | 说明 | 默认值 |
+|---|---|---|
+| `--label` | 标签：`won`/`lost`/`draft` | won |
+| `--industry` | 行业覆盖 | - |
+
+#### report
+
+查看标书包列表、质量评分与模式库，无参数。
+
+```bash
+bidgen report
+```
+
+### 6.4 典型工作流
+
+```bash
+# 1. 配置 LLM（任选其一）
+export LLM_API_KEY=sk-xxx
+export ANTHROPIC_AUTH_TOKEN=sk-ant-xxx
+
+# 2. 生成标书
+bidgen generate ./materials --rfp 招标文件.pdf --out 标书.docx
+
+# 3. 调试：只跑文本，跳过图表/审计/学习
+bidgen generate ./materials --no-illustrate --no-audit --no-learn -j 4
+
+# 4. 先建索引再分步生成
+bidgen index ./materials --rfp 招标文件.pdf
+
+# 5. 离线学习历史标书
+bidgen learn ./历史标书 --label won --industry IT
+
+# 6. 查看报告与质量评分
+bidgen report
+```
+
+服务化入口见 [docgen-svc](docgen-svc.md)。
 
 ## 7. 演进路径
 
