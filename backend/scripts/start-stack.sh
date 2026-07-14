@@ -93,9 +93,112 @@ ensure_network() {
   fi
 }
 
+# ensure_pg_login: idempotent guard against the recurring
+# "postgres role is NOLOGIN" drift that breaks /auth/login (HTTP 500).
+#
+# Background:
+#   The host-side test PG (bidwriter-pg-test) is the canonical DB for
+#   the local stack. /docker-entrypoint-initdb.d/zz_998_ensure_login.sql
+#   grants LOGIN on first init, but that runs only once per fresh
+#   cluster. Once the data dir is reused, an external actor (an older
+#   ai_teacher's PG sharing the host, a stray migration attempt, a CLI
+#   poke) can flip the role back to NOLOGIN. Every Go service then
+#   fails Login() with a connection error that the gateway surfaces as
+#   a generic 500.
+#
+# Strategy:
+#   1. Probe via TCP login (the same path the Go stack uses).
+#   2. If LOGIN, no-op.
+#   3. Otherwise try an online ALTER ROLE (cheap, no downtime).
+#   4. If online ALTER is denied (cluster itself rejects logins),
+#      fall back to a PG 16 single-user sidecar against the same data
+#      dir, run ALTER ROLE, restart the container.
+#
+# Without this preflight, a single drift incident makes every
+# subsequent start of the Go stack fail with 500 until an operator
+# hand-fixes the role.
+ensure_pg_login() {
+  local pg_container="${PG_CONTAINER:-bidwriter-pg-test}"
+  local pg_user="${PG_ADMIN_USER:-postgres}"
+  local pg_pass="${PG_ADMIN_PASSWORD:-postgres}"
+  local pg_db="${PG_DB:-bidwriter}"
+  local pg_port="${PG_PORT:-5434}"
+
+  if ! docker ps --format '\{\{.Names\}\}' 2>/dev/null | grep -qx "$pg_container"; then
+    # PG not running; not our problem. Caller will surface a clear
+    # connection error if infra is missing.
+    return 0
+  fi
+
+  # Probe via TCP. If the role is fine, the password works.
+  if docker exec -e PGPASSWORD="$pg_pass" "$pg_container" \
+      psql -h 127.0.0.1 -p 5432 -U "$pg_user" -d "$pg_db" \
+        -tAc "SELECT 1 FROM pg_roles WHERE rolname='$pg_user' AND rolcanlogin;" 2>/dev/null \
+      | grep -qx 't'; then
+    return 0
+  fi
+
+  echo "  ! postgres role NOLOGIN in $pg_container; attempting online ALTER"
+  if docker exec -e PGPASSWORD="$pg_pass" "$pg_container" \
+      psql -h 127.0.0.1 -p 5432 -U "$pg_user" -d "$pg_db" \
+        -tAc "ALTER ROLE $pg_user WITH LOGIN SUPERUSER PASSWORD '$pg_pass';" 2>/dev/null \
+      | grep -qE 'ALTER ROLE'; then
+    echo "  + repaired PG role $pg_user (online ALTER)"
+    return 0
+  fi
+
+  echo "  ! online ALTER refused; entering single-user recovery"
+  local data_dir
+  data_dir=$(docker inspect "$pg_container" --format '\{\{range .Mounts\}\}{\{\{if eq .Destination "/var/lib/postgresql/data"\}\}{\{\{.Source\}\}{\{\{end\}\}}{\{\{end\}\}}')
+  if [ -z "$data_dir" ]; then
+    echo "  ! could not locate PG data dir for $pg_container"
+    return 1
+  fi
+
+  docker stop "$pg_container" >/dev/null 2>&1 || true
+  docker rm -f "$pg_container" >/dev/null 2>&1 || true
+
+  local pg_image="${PG_IMAGE:-postgres:16}"
+  if ! docker image inspect "$pg_image" >/dev/null 2>&1; then
+    docker pull "$pg_image" >/dev/null 2>&1 || true
+  fi
+
+  docker run --rm -u root \
+    -v "$data_dir":/var/lib/postgresql/data \
+    --entrypoint /bin/bash "$pg_image" -lc "
+      chown -R postgres:postgres /var/lib/postgresql/data || true
+      rm -f /var/lib/postgresql/data/postmaster.pid
+      su postgres -s /bin/bash -c '/usr/lib/postgresql/*/bin/postgres --single -D /var/lib/postgresql/data' <<SQL
+ALTER ROLE $pg_user WITH LOGIN SUPERUSER PASSWORD '$pg_pass';
+SQL
+    " >/dev/null 2>&1
+
+  docker start "$pg_container" >/dev/null 2>&1 \
+    || (docker run -d --name "$pg_container" \
+        -e POSTGRES_PASSWORD="$pg_pass" \
+        -e POSTGRES_DB="$pg_db" \
+        -p "${pg_port}:5432" \
+        -v "$data_dir":/var/lib/postgresql/data \
+        "$pg_image" >/dev/null)
+
+  for _ in $(seq 1 30); do
+    if docker exec -e PGPASSWORD="$pg_pass" "$pg_container" \
+        psql -h 127.0.0.1 -p 5432 -U "$pg_user" -d "$pg_db" \
+          -tAc "SELECT 1;" >/dev/null 2>&1; then
+      echo "  + recovered PG role $pg_user via single-user ALTER"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "  ! PG recovery failed; manual intervention required"
+  return 1
+}
+
 start_stack() {
   ensure_binaries
   ensure_network
+  ensure_pg_login
 
   # If a previous run left the container, nuke it so we get a fresh
   # process tree (otherwise the pidfiles from inside the old container
