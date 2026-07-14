@@ -105,6 +105,7 @@ nav:
       - 状态机: architecture/state-machine.md
       - doc-gen 模块: architecture/doc-gen.md
       - docgen-svc 服务化: architecture/docgen-svc.md
+      - doc-gen 输入流程: architecture/doc-gen-ingest.md
   - 计划:
       - v1 设计: plan/v1-design.md
       - 7 个决策: plan/open-questions-decisions.md
@@ -122,6 +123,7 @@ nav:
       - 0009 pgvector 编解码: decisions/0009-pgvector-codec.md
       - 0010 导出架构更新: decisions/0010-export-architecture-update.md
       - 0011 doc-gen CLI 优先: decisions/0011-doc-gen-cli-first.md
+      - 0012 提取走 python: decisions/0012-doc-gen-extract-via-python.md
   - 开发:
       - 快速开始: development/getting-started.md
       - 开发流程（先文档）: development/workflow.md
