@@ -85,3 +85,70 @@ the cached `package-lock.json` fails to install `puppeteer-core`.
 
 **Filed:** 2026-07-01 by the test-coverage session, after observing
 the run history via `GET /repos/:owner/:repo/actions/runs?per_page=20`.
+
+---
+
+## Login returns `500 Internal Server Error` despite valid credentials
+
+**Symptom.** POST `/api/v1/auth/login` returns
+`{"error":{"code":"INTERNAL_ERROR","message":"服务器内部错误"}}` for users
+that exist in the DB. Wrong passwords correctly return `401 UNAUTHORIZED`
+(so the route is wired and the handler differentiates correctly); only the
+"valid creds" path explodes, because that's the one that calls into PG.
+
+**Confirmed root cause (2026-07-14).** The `postgres` role in
+`bidwriter-pg-test` was set to `NOLOGIN`. Because every Go service connects
+to PG as `postgres:postgres@…`, the connection is refused with
+`FATAL: role "postgres" is not permitted to log in`, the auth service
+returns the bare error to the handler, and `loginHandler` maps any non-`ErrInvalidCredentials`
+error to `httperr.InternalError` → HTTP 500.
+
+The first-init guarantee is in
+`backend/migrations/initdb.d/zz_998_ensure_login.sql` (mounted at
+`/tmp/bidwriter-initdb/zz_998_ensure_login.sql` for the manual
+`bidwriter-pg-test` container). That script only runs once per fresh
+cluster. Any subsequent `ALTER ROLE postgres NOLOGIN` (from an older
+PG container, a stray migration, or a manual `psql`) sticks and is not
+self-healed by restart.
+
+**Reproduction recipe.** From the host:
+
+```sh
+docker exec -u postgres bidwriter-pg-test psql \
+  -d bidwriter -c "ALTER ROLE postgres NOLOGIN;"
+# now any /auth/login with valid creds returns 500
+```
+
+**Fix that ships in this repo (2026-07-14).** The Go stack now self-heals:
+
+1. `backend/scripts/start-stack.sh` calls a new `ensure_pg_login`
+   preflight before launching the 11-service container.
+2. `ensure_pg_login` first tries to connect via TCP with the same DSN
+   the Go services use. If `rolcanlogin=false`, it first tries an
+   online `ALTER ROLE … WITH LOGIN SUPERUSER PASSWORD 'postgres'`.
+3. If online ALTER is itself refused (because the cluster is rejecting
+   logins entirely), `ensure_pg_login` stops `bidwriter-pg-test`, runs
+   `postgres --single` inside a `postgres:16` sidecar against the same
+   data dir, runs the `ALTER ROLE`, and restarts the container.
+4. `ensure_pg_login` is idempotent and silent on the happy path; only
+   when a fix is actually applied does it print the `+` repair line.
+
+**Operator's quick check.**
+
+```sh
+docker exec -u postgres bidwriter-pg-test psql -d bidwriter \
+  -tAc "SELECT rolname, rolcanlogin FROM pg_authid WHERE rolname='postgres';"
+```
+
+If `rolcanlogin=f`, run `backend/scripts/start-stack.sh start` once;
+it will repair and continue. The same script ships in
+`docs/user-guide.md` § "8.2" with the documented manual workaround for
+operators who don't want to bring the stack down.
+
+**Related tests:** `backend/services/api-gateway/internal/auth/auth_test.go`
+covers `ErrInvalidCredentials` but not the new preflight (the preflight is
+host-side, not in the Go binary, so no Go test reaches it). End-to-end
+verification is the curl sequence listed in `docs/user-guide.md` §
+"8.1 Smoke test the API".
+
+**Filed:** 2026-07-14 by the auth-recovery session.

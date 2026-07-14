@@ -330,11 +330,41 @@ docker exec bidwriter-stack tail -20 /logs/api-gateway.log
 
 | 日志关键词 | 根因 | 修复 |
 |---|---|---|
-| `failed SASL auth for user "postgres"` | PG `postgres` role 被改成 `NOLOGIN` 或密码漂移 | 重置 PG：见 **8.2** |
+| `role "postgres" is not permitted to log in` | PG `postgres` 角色被改成 `NOLOGIN`（启动 stack 时已自动恢复） | 见 **8.2** |
+| `failed SASL auth for user "postgres"` | 密码漂移或角色属性被外部改动 | 见 **8.2** |
 | `connection refused on 5434` | PG 容器没起来 | `docker ps -a --filter name=bidwriter-pg-test` |
 | `pq: relation "users" does not exist` | migration 没跑全 | 重跑 `apply-migrations.sh` |
 
-### 8.2 重置 PG 数据库
+> **自动修复（2026-07-14 起）**：`backend/scripts/start-stack.sh` 在启动
+> Go stack 之前会调用 `ensure_pg_login`：先尝试在线 `ALTER ROLE postgres
+> WITH LOGIN`，失败时再走 single-user recovery。所以正常
+> `start-stack.sh start` 不应该再因这个原因出现 500。如果是手工动过 PG
+> 属性后立刻看到 500，下一次 `start-stack.sh restart` 会顺手修好。
+
+### 8.2 修复 PG `postgres` 角色为 `NOLOGIN`
+
+**首选：让 `start-stack.sh` 自动修**
+
+```bash
+cd backend && ./scripts/start-stack.sh restart
+```
+
+`start-stack.sh` 进入 `ensure_pg_login`：先尝试在线 `ALTER ROLE`，失败
+时再走 single-user sidecar。所有这些都不动数据。
+
+**手动一步到位（不重启 stack）**
+
+```bash
+docker exec -e PGPASSWORD=postgres bidwriter-pg-test \
+  psql -h 127.0.0.1 -p 5432 -U postgres -d bidwriter \
+  -c "ALTER ROLE postgres WITH LOGIN SUPERUSER PASSWORD '"'"'postgres'"'"';"
+```
+
+如果这条命令也被拒（连不上 PG 的根因正是角色 NOLOGIN），就只能
+`start-stack.sh restart`——它的 single-user 分支会用 `postgres:16`
+sidecar 退出 PG、跑 `ALTER ROLE`、再拉起。
+
+**重建 PG 这条路只在数据卷损坏时才走**
 
 ```bash
 # 1. 停 PG
@@ -356,21 +386,21 @@ cd backend && ./scripts/start-stack.sh restart
 
 # 4. 重新设置 demo 用户密码（首次）
 docker exec bidwriter-pg-test psql -U postgres -d bidwriter -c "
-UPDATE users SET password_hash = '\$2a\$10\$<新生成的 hash>' WHERE email LIKE '%@demo-%';
+UPDATE users SET password_hash = '"'"'\$2a\$10\$<新生成的 hash>'"'"' WHERE email LIKE '"'"'%@demo-%'"'"';
 "
 ```
 
 新 bcrypt hash 生成：
 
 ```bash
-docker run --rm -v /tmp:/work -w /work golang:1.25-alpine sh -c '
+docker run --rm -v /tmp:/work -w /work golang:1.25-alpine sh -c '"'"'
 cat > main.go <<EOF
 package main
 import ("fmt"; "golang.org/x/crypto/bcrypt")
 func main() { h,_:=bcrypt.GenerateFromPassword([]byte("password123"),10); fmt.Println(string(h)) }
 EOF
 go mod init tmp && go get golang.org/x/crypto/bcrypt && go run main.go
-'
+'"'"'
 ```
 
 ### 8.3 页面白屏 / 路由 404
