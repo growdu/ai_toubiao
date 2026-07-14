@@ -124,7 +124,7 @@ ensure_pg_login() {
   local pg_db="${PG_DB:-bidwriter}"
   local pg_port="${PG_PORT:-5434}"
 
-  if ! docker ps --format '\{\{.Names\}\}' 2>/dev/null | grep -qx "$pg_container"; then
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$pg_container"; then
     # PG not running; not our problem. Caller will surface a clear
     # connection error if infra is missing.
     return 0
@@ -149,7 +149,7 @@ ensure_pg_login() {
 
   echo "  ! online ALTER refused; entering single-user recovery"
   local data_dir
-  data_dir=$(docker inspect "$pg_container" --format '\{\{range .Mounts\}\}{\{\{if eq .Destination "/var/lib/postgresql/data"\}\}{\{\{.Source\}\}{\{\{end\}\}}{\{\{end\}\}}')
+  data_dir=$(docker inspect "$pg_container" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}')
   if [ -z "$data_dir" ]; then
     echo "  ! could not locate PG data dir for $pg_container"
     return 1
