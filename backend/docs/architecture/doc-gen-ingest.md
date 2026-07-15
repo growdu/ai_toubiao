@@ -3,7 +3,7 @@
 > 让 bidgen 能正确摄取真实招标材料包（docx / pdf / xls / zip / 图纸混合），修复提取失败、分类误判、无去重增量等问题。
 > 关联实现：`services/doc-gen/internal/ingest/`
 
-*最后更新：2026-07-14*
+*最后更新：2026-07-15*
 
 ## 1. 目标
 
@@ -127,9 +127,9 @@ func detectCategory(path, name, rfpAbs string) string {
 - **噪声清洗**：移除 `PAGEREF`、`TOC \o`、连续页码等目录噪声（正则）。
 - **条款感知分块**：优先按"第X章 / 条 / 款"标题切段，再按 512 token 上限合并；表格不切断。
 
-### 3.6 增量索引
+### 3.6 增量索引（已实现）
 
-`ingestFile` 增加 `mtime + sha256` 记录，命中则跳过提取与向量化。`Store` 新增 `FileMeta(path) (hash, mtime, error)` 查询与写入。修复当前注释称增量、实际全量的问题。
+`ingestFile` 在提取前查询 `Store.GetFileMeta(path)`，若 `content_hash` 与当前文件 sha256 一致则跳过提取与向量化，返回 nil。提取完成后调用 `Store.SaveFileMeta(path, hash, mtime)` 写入元信息。`Store` 接口新增 `GetFileMeta` / `SaveFileMeta`，SQLite 与 Postgres 均已实现 `file_meta` 表。
 
 ### 3.7 OCR（可选，Phase 2）
 
@@ -156,13 +156,13 @@ func detectCategory(path, name, rfpAbs string) string {
 
 ## 6. 验收标准
 
-- [ ] `bidgen index examples/suite --rfp 招标文件.docx` 成功提取全部 8 类材料，无文件因格式失败
-- [ ] 商务标 / 可研 / 合同 / 清单归类正确，不再误判 rfp
-- [ ] 技术规范 5 份归 technical
-- [ ] 重复 zip / 目录只摄取一次
-- [ ] 二次 ingest 命中增量，跳过未变更文件
-- [ ] docx 表格以 Markdown 保留
-- [ ] 单元测试覆盖 detectCategory、去重、提取降级
+- [x] `bidgen index examples/suite --rfp 招标文件.docx` 成功提取全部 8 类材料，无文件因格式失败
+- [x] 商务标 / 可研 / 合同 / 清单归类正确，不再误判 rfp
+- [x] 技术规范 5 份归 technical
+- [x] 重复 zip / 目录只摄取一次
+- [x] 二次 ingest 命中增量，跳过未变更文件
+- [x] docx 表格以 Markdown 保留
+- [x] 单元测试覆盖 detectCategory、去重、提取降级、slideWindow、zip slip 防护
 
 ## 7. 替代方案
 

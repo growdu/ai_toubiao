@@ -173,6 +173,13 @@ CREATE TABLE IF NOT EXISTS audit_issues (
     evidence TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_audit_issues_bid ON audit_issues(bid_id);
+
+CREATE TABLE IF NOT EXISTS file_meta (
+    file_path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    mod_time TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `
 
 // ---- 材料索引 ----
@@ -208,6 +215,30 @@ func (s *SQLiteStore) SaveChunks(ctx context.Context, chunks []core.Chunk) error
 
 func (s *SQLiteStore) DeleteChunksByFile(ctx context.Context, filePath string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM chunks WHERE file_path = ?`, filePath)
+	return err
+}
+
+// ---- 增量索引 ----
+
+// GetFileMeta 查询文件元信息，用于增量跳过。
+func (s *SQLiteStore) GetFileMeta(ctx context.Context, filePath string) (*core.FileMeta, error) {
+	var meta core.FileMeta
+	var modTimeStr string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT file_path, content_hash, mod_time FROM file_meta WHERE file_path = ?`, filePath).
+		Scan(&meta.FilePath, &meta.Hash, &modTimeStr)
+	if err != nil {
+		return nil, err
+	}
+	meta.ModTime, _ = time.Parse(time.RFC3339Nano, modTimeStr)
+	return &meta, nil
+}
+
+// SaveFileMeta 写入或更新文件元信息。
+func (s *SQLiteStore) SaveFileMeta(ctx context.Context, meta *core.FileMeta) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO file_meta (file_path, content_hash, mod_time) VALUES (?,?,?)`,
+		meta.FilePath, meta.Hash, meta.ModTime.Format(time.RFC3339Nano))
 	return err
 }
 
