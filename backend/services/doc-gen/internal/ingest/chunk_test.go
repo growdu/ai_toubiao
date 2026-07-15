@@ -14,7 +14,6 @@ func TestSemanticChunk_BasicSplit(t *testing.T) {
 }
 
 func TestSemanticChunk_LongParagraph(t *testing.T) {
-	// 构造超长段落（超过 targetTokens）
 	var sb strings.Builder
 	for i := 0; i < 5000; i++ {
 		sb.WriteString("这是一段很长的中文文本内容用于测试分块算法。")
@@ -37,10 +36,8 @@ func TestSemanticChunk_EmptyText(t *testing.T) {
 }
 
 func TestSemanticChunk_MergeShort(t *testing.T) {
-	// 短段落应被合并
 	text := "短句1。\n\n短句2。\n\n短句3。"
 	chunks := semanticChunk(text, 512, 64)
-	// 短段落应合并为 1 个块
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 merged chunk, got %d", len(chunks))
 	}
@@ -51,7 +48,6 @@ func TestEstimateTokens_CJK(t *testing.T) {
 	if tokens <= 0 {
 		t.Fatalf("expected positive token count, got %d", tokens)
 	}
-	// 中文 1 token ≈ 1.6 字，5 个字大约 3 token
 	if tokens < 2 || tokens > 5 {
 		t.Fatalf("expected 2-5 tokens for 5 CJK chars, got %d", tokens)
 	}
@@ -64,37 +60,68 @@ func TestEstimateTokens_English(t *testing.T) {
 	}
 }
 
+// TestDetectCategory 验证按文件名分类，附件路径含"招标"不误判为 RFP。
 func TestDetectCategory(t *testing.T) {
 	tests := []struct {
-		path, name, rfpAbs string
-		want               string
+		name, rfpAbs string
+		want         string
 	}{
-		{"/tmp/招标文件.pdf", "招标文件.pdf", "", "rfp"},
-		{"/tmp/资质/证书.pdf", "证书.pdf", "", "qualification"},
-		{"/tmp/技术方案/方案.txt", "方案.txt", "", "technical"},
-		{"/tmp/业绩案例/case.txt", "case.txt", "", "performance"},
-		{"/tmp/历史标书/ref.txt", "ref.txt", "", "reference"},
-		{"/tmp/其他.txt", "其他.txt", "", "other"},
+		{"招标文件.pdf", "", "rfp"},
+		{"附件-招标-商务标投标文件.pdf", "", "reference"},
+		{"附件-招标-可行性研究报告.pdf", "", "technical"},
+		{"低压开关柜技术规范书.docx", "", "technical"},
+		{"附件-招标-合同条款.docx", "", "commercial"},
+		{"附件-招标-工程量清单.xls", "", "commercial"},
+		{"附件-招标-总平图.pdf", "", "drawing"},
+		{"资质证书.pdf", "", "qualification"},
+		{"业绩案例.txt", "", "performance"},
+		{"其他.txt", "", "other"},
 	}
 	for _, tt := range tests {
-		got := detectCategory(tt.path, tt.name, tt.rfpAbs)
+		got := detectCategory("/tmp/"+tt.name, tt.name, tt.rfpAbs)
 		if got != tt.want {
-			t.Errorf("detectCategory(%q) = %q, want %q", tt.path, got, tt.want)
+			t.Errorf("detectCategory(name=%q) = %q, want %q", tt.name, got, tt.want)
 		}
 	}
 }
 
-func TestExtractXMLText(t *testing.T) {
-	xml := `<?xml version="1.0"?>
-<root>
-<w:p><w:t>第一段</w:t></w:p>
-<w:p><w:t>第二段</w:t></w:p>
-</root>`
-	text := extractXMLText(xml)
-	if !strings.Contains(text, "第一段") {
-		t.Fatalf("expected text to contain '第一段', got %q", text)
+// TestDetectCategory_ExplicitRFP 显式 --rfp 指定的一定是 RFP。
+func TestDetectCategory_ExplicitRFP(t *testing.T) {
+	got := detectCategory("/abs/任意名.pdf", "任意名.pdf", "/abs/任意名.pdf")
+	if got != "rfp" {
+		t.Fatalf("explicit rfpAbs should be rfp, got %q", got)
 	}
-	if !strings.Contains(text, "第二段") {
-		t.Fatalf("expected text to contain '第二段', got %q", text)
+}
+
+func TestCleanNoise(t *testing.T) {
+	text := "目录\nTOC \\o \"1-2\" \\h \\z \\u\n投标人注意事项 PAGEREF _Toc230702378 \\h IV\n正文内容"
+	got := cleanNoise(text)
+	if strings.Contains(got, "PAGEREF") {
+		t.Fatalf("PAGEREF not removed: %q", got)
+	}
+	if strings.Contains(got, "TOC") {
+		t.Fatalf("TOC field not removed: %q", got)
+	}
+	if !strings.Contains(got, "正文内容") {
+		t.Fatalf("正文内容 lost: %q", got)
+	}
+}
+
+func TestNormalizeExt(t *testing.T) {
+	tests := []struct {
+		name, want string
+	}{
+		{"文件.pdf", "pdf"},
+		{"文件.pdf.pdf", "pdf"},
+		{"文件.docx", "docx"},
+		{"文件.xls", "xls"},
+		{"无扩展名", ""},
+		{"file.PDF", "pdf"},
+	}
+	for _, tt := range tests {
+		got := normalizeExt(tt.name)
+		if got != tt.want {
+			t.Errorf("normalizeExt(%q) = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
