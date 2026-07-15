@@ -1,0 +1,7 @@
+# doc-gen extract.py 依赖（ADR-0012）
+# 安装: pip install -r requirements.txt
+python-docx>=0.8
+pdfplumber>=0.11
+openpyxl>=3.1
+xlrd==1.2.0  # 旧 .xls 需要 1.x，2.x 已移除支持
+pypdfium2>=5

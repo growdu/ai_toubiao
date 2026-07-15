@@ -164,8 +164,31 @@ def fallback_xlsx(path):
         return {"text": "", "tables": [], "warnings": ["xlsx 降级失败: " + str(e)]}
 
 
+def _cell_str(c):
+    if isinstance(c, float) and c.is_integer():
+        return str(int(c))
+    if isinstance(c, str):
+        return c.strip()
+    return "" if c is None else str(c)
+
+
 def extract_xls(path):
-    return {"text": "", "tables": [], "warnings": ["xls: 需 libreoffice 或 xlrd<2 转换，已跳过"], "needs_ocr": True}
+    try:
+        import xlrd
+    except ImportError:
+        return {"text": "", "tables": [], "warnings": ["xls: xlrd 缺失，需 xlrd<2 或 libreoffice"], "needs_ocr": True}
+    parts = []
+    try:
+        wb = xlrd.open_workbook(path)
+        for sh in wb.sheets():
+            for r in range(sh.nrows):
+                cells = [_cell_str(c) for c in sh.row_values(r)]
+                if any(cells):
+                    parts.append(" | ".join(cells))
+    except Exception as e:
+        return {"text": "", "tables": [], "warnings": ["xls 提取异常: " + str(e)], "needs_ocr": True}
+    text = "\n".join(parts)
+    return {"text": text, "tables": [], "warnings": [], "needs_ocr": len(text.strip()) < 10}
 
 
 def extract_text_file(path):
