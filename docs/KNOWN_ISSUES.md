@@ -152,3 +152,87 @@ verification is the curl sequence listed in `docs/user-guide.md` §
 "8.1 Smoke test the API".
 
 **Filed:** 2026-07-14 by the auth-recovery session.
+
+
+---
+
+## External Postgres scanner breaks `/auth/login` via `ALTER ROLE … NOLOGIN`
+
+**Symptom.** `/auth/login` returns `500 INTERNAL_ERROR` after working for a
+while. `start-stack.sh restart` self-heals via `ensure_pg_login`, but the
+drift keeps recurring at random intervals.
+
+**Root cause (confirmed 2026-07-15).** With PG audit turned on
+(`log_statement = all`, `log_connections = on`), every drift episode shows
+the same external pattern:
+
+```
+... postgres@postgres from 85.11.167.232 via 85.11.167.232(59372)
+  ALTER ROLE kong WITH NOLOGIN
+  ALTER ROLE postgres WITH NOLOGIN
+  REVOKE pg_execute_server_program FROM CURRENT_USER
+```
+
+The scanner (in this case `85.11.167.232 / TechTies Inc.`, NL — a typical
+IPv4 DB-vulnerability scanner) hits `host:5434` over the public internet,
+authenticates with the `pgvector/pgvector:pg16` image-default credential
+`postgres:postgres`, runs `ALTER ROLE postgres NOLOGIN` (plus multi-tenant
+plumbing probes against the `kong` role) and disconnects. Every Go service
+that connects via the `postgres:postgres@host.docker.internal:5434` DSN
+then fails with `password authentication failed for user "postgres"` (or
+similar) and `loginHandler` maps the bare error to a generic 500.
+
+The reason `host:5434` is reachable from the internet is that the
+hand-launched `bidwriter-pg-test` was created with
+`-p 5434:5432`, which Docker's proxy publishes on **0.0.0.0**, not just
+the host's external IP. The PG container's `pg_hba.conf` only requires
+`host all all all scram-sha-256` for non-loopback connections, so a single
+successful credential guess is enough.
+
+**Fix shipped in this PR (2026-07-15).**
+
+1. New `backend/scripts/start-pg.sh` recreates the test PG container
+   with `-p 127.0.0.1:5434:5432`. Verified external probe against the
+   host's external IP is refused.
+2. `backend/docker-compose.yml` already binds PG to `127.0.0.1` (this
+   PR adds the change + a top-of-file SECURITY NOTE pointing out that
+   Redis 6379 and MinIO 9000/9001 are still on 0.0.0.0 with image-default
+   credentials and should also be localhost-bound if the dev box is
+   internet-reachable).
+3. `docs/user-guide.md` §8.2 updated to recommend
+   `./backend/scripts/start-pg.sh` instead of hand-launched
+   `docker run -p 5434:5432`; new §8.6 documents the scanner case and
+   shows the verification commands.
+4. The earlier `ensure_pg_login` preflight (PR #3) keeps paying
+   dividends here: even before the scanner closes, every
+   `start-stack.sh start|restart` already self-heals the role, so the
+   user-visible impact of any future drift is bounded to "after the
+   next restart" rather than "until an operator notices".
+
+**Reproduction recipe** (do NOT run on production).
+
+```sh
+docker inspect bidwriter-pg-test --format '{{.HostConfig.PortBindings}}'
+# => map[5432/tcp:[{HostIp HostPort:5434}]]    (HostIp empty == any)
+
+PGPASSWORD=postgres psql -h <host-public-ip> -p 5434 -U postgres -d postgres \
+  -c "ALTER ROLE postgres NOLOGIN; REVOKE pg_execute_server_program FROM postgres;"
+# => ALTER ROLE  (succeeds)
+# Next /auth/login -> 500.
+```
+
+**Verification recipe** (after applying the fix).
+
+```sh
+./backend/scripts/start-pg.sh status
+# bidwriter-pg-test: Up 8 minutes  ports=127.0.0.1:5434->5432/tcp
+
+docker inspect bidwriter-pg-test --format '{{json .NetworkSettings.Ports}}'
+# => {"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"5434"}]}
+
+curl -m 3 http://<host-public-ip>:5434/
+# => curl: (7) Failed to connect to ... port 5434
+```
+
+**Filed:** 2026-07-15 after a 5-min passive audit (`log_statement=all`)
+caught the drift as it happened.
