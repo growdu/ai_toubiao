@@ -371,12 +371,17 @@ sidecar 退出 PG、跑 `ALTER ROLE`、再拉起。
 docker rm -f bidwriter-pg-test
 
 # 2. 重建（保持数据卷 /home/ubuntu/bidwriter-pg-data 完整时跳过 rm -rf）
+#    或者更简单地，直接用脚本：
+#       ./backend/scripts/start-pg.sh
+#    注意：`5434:5432`（在所有接口上暴露）会让互联网扫描器连接到本机并
+#    拿镜像默认 `postgres:postgres` 凭证执行 ALTER ROLE postgres NOLOGIN；
+#    一定要改成 `127.0.0.1:5434:5432`，本次 PR 已固化为 start-pg.sh 默认行为。
 docker run -d --name bidwriter-pg-test \
   --restart unless-stopped \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=bidwriter \
-  -p 5434:5432 \
+  -p 127.0.0.1:5434:5432 \
   -v /home/ubuntu/bidwriter-pg-data:/var/lib/postgresql/data \
   -v /tmp/bidwriter-initdb:/docker-entrypoint-initdb.d:ro \
   pgvector/pgvector:pg16
@@ -432,6 +437,47 @@ docker exec bidwriter-stack tail -20 /logs/workflow-svc.log
 如果一直 no progress，可能是 LLM Provider 限流或故障。切到 **设置 → 系统信息** 看当前 provider 状态。
 
 ---
+
+### 8.6 PG 被外部扫描器锁住（pgvector 镜像默认密码）
+
+**症状**。`/auth/login` 偶发 `500 INTERNAL_ERROR`。在 PG 容器里开
+`log_statement = all`、`log_connections = on`，会观察到类似：
+
+```
+2026-07-15 02:15:14 ... postgres@postgres from 85.11.167.232 via 85.11.167.232(59372)
+  ALTER ROLE kong WITH NOLOGIN
+2026-07-15 02:15:15 ...   ALTER ROLE postgres NOLOGIN
+2026-07-15 02:15:31 ...   REVOKE pg_execute_server_program FROM CURRENT_USER
+```
+
+外部扫描源（这里 `85.11.167.232 / TechTies Inc.`，典型 IPv4 数据库扫描节点）
+命中 `host:5434`，用 `pgvector/pgvector:pg16` 镜像默认凭证
+`postgres:postgres` 登录，再 `ALTER ROLE postgres NOLOGIN` 让本机所有 Go 服务
+连不上 PG。
+
+**根因**。host 通过 docker-proxy 把容器端口发布到 `0.0.0.0`，任何能到这台
+机器互联网的 IP 都能尝试连接。
+
+**修复**。改用 `start-pg.sh`（本 PR 新增），容器端口仅绑 `127.0.0.1`：
+
+```
+-p 127.0.0.1:5434:5432
+```
+
+启动后校验外部确实被拒：
+
+```bash
+docker inspect bidwriter-pg-test --format '{{json .NetworkSettings.Ports}}'
+# => {"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"5434"}]}
+
+curl -m 3 http://<host-ip>:5434/
+# => curl: (7) Failed to connect ... (refused)
+```
+
+`docker-compose.yml` 里的 `postgres` 服务也已经绑到 `127.0.0.1:5432:5432`，
+并在文件头加了一段 SECURITY NOTE 提示 Redis 6379 / MinIO 9000-9001 也是
+默认凭证，公开跑前请一起改本地回环。
+
 
 ## 9. 进阶用法
 

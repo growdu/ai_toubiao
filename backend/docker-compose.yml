@@ -4,6 +4,17 @@
 #   make dev             # start everything
 #   make db-down         # stop
 
+# !!! SECURITY NOTE !!!
+# Postgres is bound to 127.0.0.1 only (see below) because exposing the
+# image-default `postgres:postgres` credential on the public internet
+# attracts automated scanners (e.g. 85.11.167.232 / TechTies Inc. in
+# 2026-07) that ALTER ROLE postgres NOLOGIN and break /auth/login with
+# HTTP 500. Redis (6379) and MinIO (9000/9001) below are still bound to
+# 0.0.0.0 with their image-default creds; if your dev box is
+# internet-reachable, edit them to `127.0.0.1:6379:6379` etc. before
+# `make db-up`. CI runners we use are NATed in 10.x/192.168.x and are
+# safe as-is.
+
 services:
   # ============================================================================
   # PostgreSQL 16 + pgvector
@@ -13,7 +24,7 @@ services:
     container_name: bidwriter-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
