@@ -12,7 +12,8 @@ Thumbs.db
 node_modules/
 dist/
 build/
-site/         # mkdocs build 输出
+# mkdocs build 输出
+site/
 *.log
 npm-debug.log*
 
@@ -25,3 +26,6 @@ npm-debug.log*
 backend/services/*/[a-z]*-svc
 backend/services/*/bin/
 **/__pycache__/
+
+# Test data (large binary bid input files, not for repo)
+examples/
