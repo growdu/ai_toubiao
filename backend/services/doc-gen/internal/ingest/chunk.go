@@ -101,6 +101,10 @@ func slideWindow(text string, targetTokens, overlap int) []string {
 	if targetChars <= 0 {
 		targetChars = 1024
 	}
+	// 防止 overlap >= target 导致步长 ≤0 死循环
+	if overlapChars >= targetChars {
+		overlapChars = targetChars / 2
+	}
 
 	runes := []rune(text)
 	var chunks []string

@@ -143,7 +143,11 @@ func (ing *Ingester) collectFiles(ctx context.Context, dir string, rfpAbs string
 	}
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			log.Warn("ingest: 遍历错误，跳过", "path", path, "err", err)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			return nil
@@ -189,6 +193,14 @@ func (ing *Ingester) ingestFile(ctx context.Context, f fileEntry) ([]core.Chunk,
 	log := ing.Log
 	if log == nil {
 		log = slog.Default()
+	}
+
+	// 增量：hash 命中则跳过提取与向量化
+	if ing.Store != nil && f.ContentHash != "" {
+		if meta, err := ing.Store.GetFileMeta(ctx, f.Path); err == nil && meta != nil && meta.Hash == f.ContentHash {
+			log.Info("ingest: 文件未变更，跳过", "file", f.Name)
+			return nil, nil
+		}
 	}
 
 	text := ""
@@ -260,6 +272,19 @@ func (ing *Ingester) ingestFile(ctx context.Context, f fileEntry) ([]core.Chunk,
 			}
 			for j := 0; j < len(vecs) && i+j < len(chunks); j++ {
 				chunks[i+j].Embedding = vecs[j]
+			}
+		}
+	}
+
+	// 保存文件元信息供下次增量跳过
+	if ing.Store != nil && f.ContentHash != "" {
+		if fi, err := os.Stat(f.Path); err == nil {
+			if err := ing.Store.SaveFileMeta(ctx, &core.FileMeta{
+				FilePath: f.Path,
+				Hash:     f.ContentHash,
+				ModTime:  fi.ModTime(),
+			}); err != nil {
+				log.Warn("ingest: 保存文件元信息失败", "file", f.Name, "err", err)
 			}
 		}
 	}

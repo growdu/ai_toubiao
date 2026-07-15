@@ -168,6 +168,13 @@ CREATE TABLE IF NOT EXISTS audit_issues (
     evidence TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_audit_issues_bid ON audit_issues(bid_id);
+
+CREATE TABLE IF NOT EXISTS file_meta (
+    file_path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    mod_time TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `
 
 // ---- 材料索引 ----
@@ -205,6 +212,29 @@ func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []core.Chunk) err
 
 func (s *PostgresStore) DeleteChunksByFile(ctx context.Context, filePath string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM chunks WHERE file_path = $1`, filePath)
+	return err
+}
+
+// ---- 增量索引 ----
+
+// GetFileMeta 查询文件元信息，用于增量跳过。
+func (s *PostgresStore) GetFileMeta(ctx context.Context, filePath string) (*core.FileMeta, error) {
+	var meta core.FileMeta
+	err := s.db.QueryRowContext(ctx,
+		`SELECT file_path, content_hash, mod_time FROM file_meta WHERE file_path = $1`, filePath).
+		Scan(&meta.FilePath, &meta.Hash, &meta.ModTime)
+	if err != nil {
+		return nil, err
+	}
+	return &meta, nil
+}
+
+// SaveFileMeta 写入或更新文件元信息。
+func (s *PostgresStore) SaveFileMeta(ctx context.Context, meta *core.FileMeta) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO file_meta (file_path, content_hash, mod_time) VALUES ($1,$2,$3)
+		 ON CONFLICT (file_path) DO UPDATE SET content_hash=EXCLUDED.content_hash, mod_time=EXCLUDED.mod_time`,
+		meta.FilePath, meta.Hash, meta.ModTime)
 	return err
 }
 

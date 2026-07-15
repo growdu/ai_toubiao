@@ -23,6 +23,10 @@ type Store interface {
 	ListChunks(ctx context.Context, category string) ([]core.Chunk, error)
 	SearchChunks(ctx context.Context, queryVec []float32, topK int) ([]core.Chunk, error)
 
+	// ---- 增量索引 ----
+	GetFileMeta(ctx context.Context, filePath string) (*core.FileMeta, error)
+	SaveFileMeta(ctx context.Context, meta *core.FileMeta) error
+
 	// ---- RFP 画像 ----
 	SaveRFPProfile(ctx context.Context, p *core.RFPProfile) error
 	GetRFPProfile(ctx context.Context, id uuid.UUID) (*core.RFPProfile, error)
@@ -61,10 +65,10 @@ type Store interface {
 // PromptVariant 是多臂老虎机的一个臂（Prompt 变体）。
 type PromptVariant struct {
 	ID        uuid.UUID `json:"id"        db:"id"`
-	Task      string    `json:"task"      db:"task"`       // outline/content/mermaid
-	Name      string    `json:"name"      db:"name"`       // 变体名
-	Template  string    `json:"template"  db:"template"`   // prompt 模板
-	Alpha     int       `json:"alpha"     db:"alpha"`      // 成功次数（Beta 分布）
-	Beta      int       `json:"beta"      db:"beta"`       // 失败次数
+	Task      string    `json:"task"      db:"task"`     // outline/content/mermaid
+	Name      string    `json:"name"      db:"name"`     // 变体名
+	Template  string    `json:"template"  db:"template"` // prompt 模板
+	Alpha     int       `json:"alpha"     db:"alpha"`    // 成功次数（Beta 分布）
+	Beta      int       `json:"beta"      db:"beta"`     // 失败次数
 	CreatedAt string    `json:"created_at" db:"created_at"`
 }

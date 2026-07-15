@@ -226,3 +226,12 @@ type LLMResponse struct {
 	CostUSD          float64 `json:"cost_usd"`
 	CacheHit         bool    `json:"cache_hit"`
 }
+
+// ---- 增量索引 ----
+
+// FileMeta 记录源文件的元信息，用于增量摄取跳过未变更文件（doc-gen-ingest.md §3.6）。
+type FileMeta struct {
+	FilePath string    `json:"file_path" db:"file_path"`
+	Hash     string    `json:"hash"       db:"content_hash"`
+	ModTime  time.Time `json:"mod_time"   db:"mod_time"`
+}
