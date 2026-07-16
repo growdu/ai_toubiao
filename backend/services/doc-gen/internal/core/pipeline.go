@@ -172,12 +172,13 @@ func (p *Pipeline) Run(ctx context.Context, opts *GenerateOptions) (*PipelineRes
 
 	// 组装 BidPackage
 	pkg := &BidPackage{
-		ID:        uuid.New(),
-		RFPID:     profile.ID,
-		OutlineID: outline.ID,
-		Chapters:  chapters,
-		Label:     "draft",
-		CreatedAt: time.Now(),
+		ID:          uuid.New(),
+		RFPID:       profile.ID,
+		ProjectName: profile.ProjectName,
+		OutlineID:   outline.ID,
+		Chapters:    chapters,
+		Label:       "draft",
+		CreatedAt:   time.Now(),
 	}
 
 	// Step 5: Illustrate

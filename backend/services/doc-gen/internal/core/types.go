@@ -136,6 +136,7 @@ type BidPackage struct {
 	Label        string         `json:"label"       db:"label"` // won/lost/draft
 	PatternID    *uuid.UUID     `json:"pattern_id,omitempty" db:"pattern_id"`
 	OutputPath   string         `json:"output_path" db:"output_path"`
+	ProjectName  string         `json:"project_name" db:"-"`
 	CreatedAt    time.Time      `json:"created_at"  db:"created_at"`
 }
 
