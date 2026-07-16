@@ -255,6 +255,16 @@ func (s *PostgresStore) ListChunks(ctx context.Context, category string) ([]core
 	return pgScanChunks(rows)
 }
 
+func (s *PostgresStore) ListChunksByFile(ctx context.Context, filePath string) ([]core.Chunk, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, file_path, category, chunk_offset, text FROM chunks WHERE file_path = $1`, filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return pgScanChunks(rows)
+}
+
 func (s *PostgresStore) SearchChunks(ctx context.Context, queryVec []float32, topK int) ([]core.Chunk, error) {
 	emb := pgVectorFormat(queryVec)
 	rows, err := s.db.QueryContext(ctx,

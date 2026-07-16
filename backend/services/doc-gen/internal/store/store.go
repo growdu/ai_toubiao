@@ -21,6 +21,7 @@ type Store interface {
 	SaveChunks(ctx context.Context, chunks []core.Chunk) error
 	DeleteChunksByFile(ctx context.Context, filePath string) error
 	ListChunks(ctx context.Context, category string) ([]core.Chunk, error)
+	ListChunksByFile(ctx context.Context, filePath string) ([]core.Chunk, error)
 	SearchChunks(ctx context.Context, queryVec []float32, topK int) ([]core.Chunk, error)
 
 	// ---- 增量索引 ----
