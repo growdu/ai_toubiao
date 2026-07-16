@@ -17,10 +17,10 @@ import (
 
 // Planner 实现 core.Planner 接口。
 type Planner struct {
-	LLM     llm.Client
-	Log     *slog.Logger
-	TotalBudget int  // 总字数预算，默认 60000
-	Learner core.Learner  // 可选：学习增强
+	LLM         llm.Client
+	Log         *slog.Logger
+	TotalBudget int          // 总字数预算，默认 60000
+	Learner     core.Learner // 可选：学习增强
 }
 
 // New 创建 Planner。
@@ -136,7 +136,7 @@ func (p *Planner) llmPlan(ctx context.Context, profile *core.RFPProfile, pattern
 			{Role: "system", Content: "你是标书撰写专家，只返回合法的 JSON 数组。"},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   4096,
+		MaxTokens:   8192,
 		Temperature: 0.3,
 	})
 	if err != nil {
@@ -330,7 +330,12 @@ func isFrontMatter(title string) bool {
 }
 
 // extractJSONArray 从文本中提取 JSON 数组。
+// 处理 LLM 常见的 ```json ... ``` 包裹和前后多余文字。
 func extractJSONArray(s string) string {
+	// 去除代码围栏
+	s = strings.ReplaceAll(s, "```json", "")
+	s = strings.ReplaceAll(s, "```", "")
+	s = strings.TrimSpace(s)
 	start := strings.Index(s, "[")
 	if start < 0 {
 		return ""
