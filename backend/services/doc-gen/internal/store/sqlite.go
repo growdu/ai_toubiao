@@ -257,6 +257,16 @@ func (s *SQLiteStore) ListChunks(ctx context.Context, category string) ([]core.C
 	return scanChunks(rows)
 }
 
+func (s *SQLiteStore) ListChunksByFile(ctx context.Context, filePath string) ([]core.Chunk, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, file_path, category, chunk_offset, text, embedding FROM chunks WHERE file_path = ?`, filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanChunks(rows)
+}
+
 func (s *SQLiteStore) SearchChunks(ctx context.Context, queryVec []float32, topK int) ([]core.Chunk, error) {
 	// Phase1：全表加载到内存做 cosine similarity。
 	// 数据量小（CLI 模式）时性能足够；Phase2 换 pgvector。

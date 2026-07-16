@@ -195,11 +195,20 @@ func (ing *Ingester) ingestFile(ctx context.Context, f fileEntry) ([]core.Chunk,
 		log = slog.Default()
 	}
 
-	// 增量：hash 命中则跳过提取与向量化
+	// 增量：hash 命中则跳过提取与向量化，但返回已有分块供下游使用
 	if ing.Store != nil && f.ContentHash != "" {
 		if meta, err := ing.Store.GetFileMeta(ctx, f.Path); err == nil && meta != nil && meta.Hash == f.ContentHash {
 			log.Info("ingest: 文件未变更，跳过", "file", f.Name)
-			return nil, nil
+			existing, err := ing.Store.ListChunksByFile(ctx, f.Path)
+			if err != nil {
+				log.Warn("ingest: 读取已有分块失败", "file", f.Name, "err", err)
+				return nil, nil
+			}
+			for i := range existing {
+				existing[i].ContentHash = f.ContentHash
+				existing[i].SourceName = f.Name
+			}
+			return existing, nil
 		}
 	}
 
