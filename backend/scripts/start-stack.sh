@@ -39,7 +39,7 @@ NETWORK_NAME="bidwriter-net"
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 # ---- infra endpoints (host-side, forwarded into container) ----
-PG_DSN="${PG_DSN:-postgres://postgres:postgres@host.docker.internal:5434/bidwriter?sslmode=disable}"
+PG_DSN="${PG_DSN:-postgres://postgres:postgres@bidwriter-pg-test:5432/bidwriter?sslmode=disable}"
 REDIS_URL="${REDIS_URL:-redis://host.docker.internal:6390/0}"
 MINIO_ENDPOINT="${MINIO_ENDPOINT:-host.docker.internal:9100}"
 
@@ -65,6 +65,9 @@ COMMON_ENV=(
   -e "ALLOW_MOCK_PROVIDER=true"
   -e "AUTH_REQUIRED=false"
   -e "LOG_LEVEL=${LOG_LEVEL:-info}"
+  -e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN}}"
+  -e "ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-https://api.minimaxi.com/anthropic}"
+  -e "ROUTES_CONFIG_PATH=${ROUTES_CONFIG_PATH:-/src/services/router-svc/configs/routes.yaml}"
 )
 
 # ---- per-service port plan (must stay in sync with stack-entrypoint.sh) ----
@@ -133,7 +136,7 @@ ensure_pg_login() {
   # Probe via TCP. If the role is fine, the password works.
   if docker exec -e PGPASSWORD="$pg_pass" "$pg_container" \
       psql -h 127.0.0.1 -p 5432 -U "$pg_user" -d "$pg_db" \
-        -tAc "SELECT 1 FROM pg_roles WHERE rolname='$pg_user' AND rolcanlogin;" 2>/dev/null \
+        -tAc "SELECT rolcanlogin FROM pg_roles WHERE rolname='$pg_user';" 2>/dev/null \
       | grep -qx 't'; then
     return 0
   fi

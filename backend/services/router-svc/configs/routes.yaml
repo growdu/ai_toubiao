@@ -16,7 +16,7 @@ version: 1
 routes:
   # 招标文件解析 — highest quality, large context.
   - task: rfp_parse
-    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    primary: { provider: anthropic, model: MiniMax-M3 }
     fallback:
       - { provider: openai,    model: gpt-4o }
       - { provider: deepseek,  model: deepseek-chat }
@@ -33,7 +33,7 @@ routes:
 
   # 正文生成 — highest quality, no caching (every section is unique).
   - task: content_generate
-    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    primary: { provider: anthropic, model: MiniMax-M3 }
     fallback:
       - { provider: openai, model: gpt-4o }
     budget: { max_input_tokens: 50000, max_cost_usd: 0.30, timeout_seconds: 180 }
@@ -41,7 +41,7 @@ routes:
 
   # 一致性审计 — large context, fast turnaround.
   - task: audit_normal
-    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    primary: { provider: anthropic, model: MiniMax-M3 }
     fallback:
       - { provider: openai, model: gpt-4o }
     budget: { max_input_tokens: 200000, max_cost_usd: 0.80, timeout_seconds: 180 }
@@ -49,7 +49,7 @@ routes:
 
   # 一致性审计 agent — must NOT fall back; user retries on failure.
   - task: audit_agent
-    primary: { provider: anthropic, model: claude-sonnet-4-5 }
+    primary: { provider: anthropic, model: MiniMax-M3 }
     fallback: []
     budget: { max_input_tokens: 500000, max_cost_usd: 5.00, timeout_seconds: 600 }
     cache:  { enabled: false }
