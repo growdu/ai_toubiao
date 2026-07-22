@@ -158,3 +158,15 @@ export function filenameFromDisposition(header: string | undefined): string | nu
   if (!m) return null
   try { return decodeURIComponent(m[1]) } catch { return m[1] }
 }
+
+// 材料解析（4 步向导步骤1/2）：解析、读取、更新 bid_jobs.parse_result。
+// parseMaterial 调 router-svc 把原始材料提取为结构化字段；getParse 读取
+// 已保存结果供步骤2审核编辑；updateParse 保存用户编辑后的结果。
+export const parseApi = {
+  parseMaterial: (id: string, materialText?: string) =>
+    api.post<{ data: { material_text: string; parsed: any } }>(`/bids/${id}/parse`, materialText ? { material_text: materialText } : {}),
+  getParse: (id: string) =>
+    api.get<{ data: { material_text: string; parsed: any } }>(`/bids/${id}/parse`),
+  updateParse: (id: string, data: { material_text?: string; parsed: any }) =>
+    api.put<{ data: { status: string } }>(`/bids/${id}/parse`, data),
+}

@@ -8,17 +8,19 @@
 //   - CORS for the web frontend
 //
 // Routing table:
-//   POST /api/v1/auth/login         -> handled locally (DB lookup)
-//   POST /api/v1/auth/refresh       -> handled locally (verify refresh, issue new pair)
-//   /api/v1/projects/*              -> project-svc
-//   /api/v1/documents/*             -> document-svc
-//   /api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
-//   /api/v1/kb/*                    -> knowledge-svc
-//   /api/v1/docgen/*               -> docgen-svc
-//   /api/v1/audit/*                -> audit-svc
-//   /api/v1/templates/*            -> template-svc
-//   /api/v1/billing/*              -> billing-svc
-//   /api/v1/notifications/*        -> notify-svc
+//
+//	POST /api/v1/auth/login         -> handled locally (DB lookup)
+//	POST /api/v1/auth/refresh       -> handled locally (verify refresh, issue new pair)
+//	/api/v1/projects/*              -> project-svc
+//	/api/v1/documents/*             -> document-svc
+//	/api/v1/bids/*                  -> workflow-svc (includes /export/{word,pdf})
+//	/api/v1/kb/*                    -> knowledge-svc
+//	/api/v1/docgen/*               -> docgen-svc
+//	/api/v1/audit/*                -> audit-svc
+//	/api/v1/templates/*            -> template-svc
+//	/api/v1/billing/*              -> billing-svc
+//	/api/v1/notifications/*        -> notify-svc
+//
 // Note: the public prefix is /api/v1/kb/* (not /api/v1/knowledge/*)
 // because knowledge-svc mounts its handlers under /api/v1/kb/* internally
 // and api-gateway forwards the path unchanged. Using a matching public
@@ -183,7 +185,7 @@ func requestIDMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

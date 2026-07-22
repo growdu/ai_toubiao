@@ -57,6 +57,7 @@
 | `outlining` | Step03 拆解大纲 |
 | `facts` | Step04 提取全局事实 |
 | `generating` | Step05 生成正文 |
+| `awaiting_review` | 章节生成完成的人工审核暂停点（HIL）|
 | `auditing` | 一致性审计 |
 | `exporting` | 导出 Word |
 | `done` | 全部完成 |
@@ -72,7 +73,8 @@ var validTransitions = map[State][]State{
     StateParsing:     {StateOutlining, StateFailed, StatePaused, StateCancelled},
     StateOutlining:   {StateFacts, StateFailed, StatePaused, StateCancelled},
     StateFacts:       {StateGenerating, StateFailed, StatePaused, StateCancelled},
-    StateGenerating:  {StateAuditing, StateFailed, StatePaused, StateCancelled},
+    StateGenerating:       {StateAwaitingReview, StateFailed, StatePaused, StateCancelled},
+    StateAwaitingReview:   {StateAuditing, StateGenerating, StateFailed, StatePaused, StateCancelled},
     StateAuditing:    {StateExporting, StateFailed, StatePaused, StateCancelled},
     StateExporting:   {StateDone, StateFailed, StateCancelled},
     StatePaused:      {StateParsing, StateOutlining, StateFacts, StateGenerating, StateAuditing, StateExporting, StateCancelled},
@@ -576,7 +578,9 @@ stateDiagram-v2
     Facts --> Generating: step_done
     Facts --> Paused: user_pause
     Facts --> Failed: error
-    Generating --> Auditing: step_done
+    Generating --> AwaitingReview: step_done
+    AwaitingReview --> Auditing: approve
+    AwaitingReview --> Generating: reject
     Generating --> Paused: user_pause
     Generating --> Failed: error
     Auditing --> Exporting: step_done

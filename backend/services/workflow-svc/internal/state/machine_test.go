@@ -26,7 +26,8 @@ func TestLinearPlan(t *testing.T) {
 func TestCanTransition_HappyPath(t *testing.T) {
 	chain := []model.State{
 		model.StatePending, model.StateParsing, model.StateOutlining,
-		model.StateFacts, model.StateGenerating, model.StateAuditing,
+		model.StateFacts, model.StateGenerating, model.StateAwaitingReview,
+		model.StateAuditing,
 		model.StateExporting, model.StateDone,
 	}
 	for i := 0; i < len(chain)-1; i++ {
@@ -125,7 +126,8 @@ func TestStepForState(t *testing.T) {
 func TestNextState(t *testing.T) {
 	chain := []model.State{
 		model.StatePending, model.StateParsing, model.StateOutlining,
-		model.StateFacts, model.StateGenerating, model.StateAuditing,
+		model.StateFacts, model.StateGenerating, model.StateAwaitingReview,
+		model.StateAuditing,
 		model.StateExporting, model.StateDone,
 	}
 	for i := 0; i < len(chain)-1; i++ {

@@ -18,7 +18,7 @@ vi.mock('./pages/LandingPage', () => ({ default: () => <div data-testid="landing
 vi.mock('./pages/auth/LoginPage', () => ({ default: () => <div data-testid="login" /> }))
 vi.mock('./pages/auth/RegisterPage', () => ({ default: () => <div data-testid="register" /> }))
 vi.mock('./pages/bids/BidsPage', () => ({ default: () => <div data-testid="bids" /> }))
-vi.mock('./pages/bids/BidWorkspace', () => ({ default: () => <div data-testid="workspace" /> }))
+vi.mock('./pages/bids/BidWorkspaceWrapper', () => ({ default: () => <div data-testid="workspace" /> }))
 vi.mock('./pages/bids/ExportPage', () => ({ default: () => <div data-testid="export" /> }))
 vi.mock('./pages/knowledge/KnowledgePage', () => ({ default: () => <div data-testid="knowledge" /> }))
 vi.mock('./pages/settings/SettingsPage', () => ({ default: () => <div data-testid="settings" /> }))

@@ -9,7 +9,7 @@ import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/auth/LoginPage'
 import RegisterPage from './pages/auth/RegisterPage'
 import BidsPage from './pages/bids/BidsPage'
-import BidWorkspace from './pages/bids/BidWorkspace'
+import BidWorkspaceWrapper from './pages/bids/BidWorkspaceWrapper'
 import ExportPage from './pages/bids/ExportPage'
 import KnowledgePage from './pages/knowledge/KnowledgePage'
 import SettingsPage from './pages/settings/SettingsPage'
@@ -53,7 +53,7 @@ export default function App() {
         <Route path='/register' element={<RegisterElement />} />
         <Route element={<ProtectedElement />}>
           <Route path='/bids' element={<RouteErrorBoundary><BidsPage /></RouteErrorBoundary>} />
-          <Route path='/bids/:id' element={<RouteErrorBoundary><BidWorkspace /></RouteErrorBoundary>} />
+          <Route path='/bids/:id' element={<RouteErrorBoundary><BidWorkspaceWrapper /></RouteErrorBoundary>} />
           <Route path='/bids/:id/export' element={<RouteErrorBoundary><ExportPage /></RouteErrorBoundary>} />
           <Route path='/knowledge' element={<RouteErrorBoundary><KnowledgePage /></RouteErrorBoundary>} />
           <Route path='/settings' element={<RouteErrorBoundary><SettingsPage /></RouteErrorBoundary>} />

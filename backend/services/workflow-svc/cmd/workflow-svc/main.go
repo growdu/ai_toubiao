@@ -9,12 +9,13 @@
 //   - Asynq worker pool for async pipeline execution
 //
 // Endpoints:
-//   POST   /api/v1/workflows                         — create new workflow for a project
-//   GET    /api/v1/workflows?project_id=&status=    — list
-//   GET    /api/v1/workflows/{id}
-//   POST   /api/v1/workflows/{id}/transition        — change state
-//   GET    /api/v1/workflows/{id}/steps             — per-step progress
-//   GET    /api/v1/workflows/{id}/events            — audit log
+//
+//	POST   /api/v1/workflows                         — create new workflow for a project
+//	GET    /api/v1/workflows?project_id=&status=    — list
+//	GET    /api/v1/workflows/{id}
+//	POST   /api/v1/workflows/{id}/transition        — change state
+//	GET    /api/v1/workflows/{id}/steps             — per-step progress
+//	GET    /api/v1/workflows/{id}/events            — audit log
 package main
 
 import (
@@ -89,6 +90,7 @@ func run() error {
 		PDFConverter: pdf,
 		Enqueuer:     api.NewAsynqEnqueuer(asynqClient, pool, log),
 		ChapterPool:  pool,
+		RouterURL:    cfg.RouterURL,
 	}
 	router := h.Routes()
 	handler := middleware.RequestID(middleware.Recover(log)(middleware.Logger(log)(router)))

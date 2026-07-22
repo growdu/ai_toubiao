@@ -14,6 +14,7 @@ const statusLabels: Record<string, string> = {
   pending: '等待中', parsing: '解析中', outlining: '生成大纲',
   generating: '生成内容', auditing: '审计中', exporting: '导出中',
   done: '已完成', failed: '失败', paused: '已暂停', facts: '审查中',
+  awaiting_review: '等待审核', cancelled: '已取消',
 }
 
 type StatusFilter = 'all' | 'active' | 'done' | 'failed'

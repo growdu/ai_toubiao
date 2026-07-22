@@ -74,14 +74,14 @@ var ErrTransitionConflict = errors.New("workflow transition conflict: state or v
 
 // Watcher is what chapter.go calls after persisting a chapter's content.
 // It checks whether the bid job has finished its chapter generation phase
-// and, if so, transitions the workflow from generating to auditing.
+// and, if so, transitions the workflow from generating to awaiting_review.
 //
 // Decisions:
 //   - Stay:               not all chapters are terminal yet; do nothing
 //   - BlockedFailed:      at least one chapter is in 'failed' status but still
-//                         has retries left; wait for Asynq to retry it
+//     has retries left; wait for Asynq to retry it
 //   - AdvanceAllSucceeded: every chapter is succeeded OR failed-terminal AND
-//                          no blocked-failed → safe to advance
+//     no blocked-failed → safe to advance
 type Watcher struct {
 	Store        ChapterProgressStore
 	Transitioner WorkflowTransitioner
@@ -92,10 +92,10 @@ type Watcher struct {
 
 // Decision enumerates what ProgressWatcher.CheckAndAdvance wants to do.
 type Decision struct {
-	Kind            string // "Stay" | "Advance" | "BlockedFailed"
-	SucceededCount  int
-	TotalCount      int
-	BlockedFailures int
+	Kind             string // "Stay" | "Advance" | "BlockedFailed"
+	SucceededCount   int
+	TotalCount       int
+	BlockedFailures  int
 	TerminalFailures int
 }
 
@@ -135,7 +135,7 @@ func (w *Watcher) Check(ctx context.Context, bidJobID uuid.UUID) (Decision, erro
 }
 
 // CheckAndAdvance runs Check and, when the decision is Advance, transitions
-// the workflow from generating -> auditing. transition failures are logged
+// the workflow from generating -> awaiting_review. transition failures are logged
 // and returned (the caller can decide whether to swallow).
 func (w *Watcher) CheckAndAdvance(ctx context.Context, bidJobID uuid.UUID) error {
 	d, err := w.Check(ctx, bidJobID)
@@ -163,10 +163,10 @@ func (w *Watcher) CheckAndAdvance(ctx context.Context, bidJobID uuid.UUID) error
 		return nil
 	}
 	if err := w.Transitioner.Transition(ctx, wfID,
-		model.StateGenerating, model.StateAuditing,
+		model.StateGenerating, model.StateAwaitingReview,
 		version, w.ActorID); err != nil {
 		if w.Log != nil {
-			w.Log.Warn("progress: transition to auditing failed",
+			w.Log.Warn("progress: transition to awaiting_review failed",
 				slog.String("workflow_id", wfID.String()),
 				slog.String("bid_job_id", bidJobID.String()),
 				slog.Any("err", err))
@@ -174,7 +174,7 @@ func (w *Watcher) CheckAndAdvance(ctx context.Context, bidJobID uuid.UUID) error
 		return err
 	}
 	if w.Log != nil {
-		w.Log.Info("progress: advanced workflow to auditing",
+		w.Log.Info("progress: advanced workflow to awaiting_review",
 			slog.String("workflow_id", wfID.String()),
 			slog.String("bid_job_id", bidJobID.String()),
 			slog.Int("chapters", d.TotalCount),

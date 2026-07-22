@@ -16,8 +16,8 @@ import (
 	"github.com/bidwriter/shared/pkg/logger"
 	"github.com/bidwriter/shared/pkg/validator"
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // WorkflowBackend is the storage contract required by Handlers. Defined at the
@@ -37,10 +37,11 @@ type WorkflowBackend interface {
 type Handlers struct {
 	Store        WorkflowBackend
 	Log          *slog.Logger
-	DocBuilder   DocBuilder   // optional; defaults to ooxmlBuilder{}
-	PDFConverter PDFConverter // optional; nil means PDF endpoints fall back to DOCX
-	Enqueuer     Enqueuer     // optional; nil means transitions don't enqueue tasks
+	DocBuilder   DocBuilder    // optional; defaults to ooxmlBuilder{}
+	PDFConverter PDFConverter  // optional; nil means PDF endpoints fall back to DOCX
+	Enqueuer     Enqueuer      // optional; nil means transitions don't enqueue tasks
 	ChapterPool  *pgxpool.Pool // optional; enables chapter CRUD endpoints
+	RouterURL    string        // optional; enables material parsing via router-svc
 }
 
 func (h *Handlers) Routes() http.Handler {
@@ -67,11 +68,11 @@ func (h *Handlers) Routes() http.Handler {
 			r.Get("/export/word", h.exportWordHandler)
 			r.Get("/export/pdf", h.exportPDFHandler)
 			r.Post("/export", h.exportDocumentHandler)
-		// Chapter CRUD endpoints
-		if h.ChapterPool != nil {
-			ch := &ChapterHandlers{Pool: h.ChapterPool, Log: h.Log, Enqueuer: h.Enqueuer}
-			ch.ChapterRoutes(r)
-		}
+			// Chapter CRUD endpoints
+			if h.ChapterPool != nil {
+				ch := &ChapterHandlers{Pool: h.ChapterPool, Log: h.Log, Enqueuer: h.Enqueuer}
+				ch.ChapterRoutes(r)
+			}
 		})
 	})
 	return r

@@ -8,6 +8,7 @@ import { Button, Modal } from '../../components/ui'
 import { useRejectionTemplates, sortTemplates } from '../../lib/rejectionTemplates'
 import { BID_STATUS_LABELS } from './workspace-helpers'
 import { WorkspaceHeader } from './WorkspaceHeader'
+import { BidStepper, stepFromStatus } from './BidStepper'
 import { MaterialPanel } from './MaterialPanel'
 import { ChapterTree } from './ChapterTree'
 import { ChapterEditor } from './ChapterEditor'
@@ -643,6 +644,7 @@ export default function BidWorkspace() {
         totalChapters={bid?.total_chapters ?? 0}
         rightActions={renderWorkflowActions()}
       />
+      <BidStepper current={stepFromStatus(bid?.status)} />
 
 {/* Live status strip — only shows when there's something to report.
        * Now expanded with: progress bar, per-status counts, and batch

@@ -39,7 +39,7 @@ type ChapterWorker struct {
 	// Progress is an optional auto-advance hook. When set, the worker checks
 	// chapter-completion progress after writing each chapter's content and,
 	// if every chapter is in a terminal state, transitions the workflow from
-	// generating -> auditing without a manual API call.
+	// generating -> awaiting_review without a manual API call.
 	Progress *Watcher
 }
 
@@ -132,7 +132,7 @@ func (w *ChapterWorker) Process(ctx context.Context, task *asynq.Task) error {
 		w.log.Warn("chapter: failed to update bid progress", slog.Any("error", err))
 	}
 
-	// 6. Auto-advance the workflow from generating -> auditing when every
+	// 6. Auto-advance the workflow from generating -> awaiting_review when every
 	// chapter spec is in a terminal state. Best effort; failures are
 	// logged and ignored (the operator can manually retry the transition).
 	if w.Progress != nil {

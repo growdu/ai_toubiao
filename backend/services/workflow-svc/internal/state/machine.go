@@ -14,21 +14,22 @@ var ErrInvalidTransition = errors.New("invalid state transition")
 // validTransitions is the canonical adjacency list.
 // Any state not listed explicitly has no outgoing transitions (terminal).
 var validTransitions = map[model.State][]model.State{
-	model.StatePending:    {model.StateParsing, model.StateFailed, model.StateCancelled},
-	model.StateParsing:    {model.StateOutlining, model.StateFailed, model.StatePaused, model.StateCancelled},
-	model.StateOutlining:  {model.StateFacts, model.StateFailed, model.StatePaused, model.StateCancelled},
-	model.StateFacts:      {model.StateGenerating, model.StateFailed, model.StatePaused, model.StateCancelled},
-	model.StateGenerating: {model.StateAuditing, model.StateFailed, model.StatePaused, model.StateCancelled},
-	model.StateAuditing:   {model.StateExporting, model.StateFailed, model.StatePaused, model.StateCancelled},
-	model.StateExporting:  {model.StateDone, model.StateFailed, model.StateCancelled},
+	model.StatePending:        {model.StateParsing, model.StateOutlining, model.StateFailed, model.StateCancelled},
+	model.StateParsing:        {model.StateOutlining, model.StateFailed, model.StatePaused, model.StateCancelled},
+	model.StateOutlining:      {model.StateFacts, model.StateFailed, model.StatePaused, model.StateCancelled},
+	model.StateFacts:          {model.StateGenerating, model.StateFailed, model.StatePaused, model.StateCancelled},
+	model.StateGenerating:     {model.StateAwaitingReview, model.StateFailed, model.StatePaused, model.StateCancelled},
+	model.StateAwaitingReview: {model.StateAuditing, model.StateGenerating, model.StateFailed, model.StatePaused, model.StateCancelled},
+	model.StateAuditing:       {model.StateExporting, model.StateFailed, model.StatePaused, model.StateCancelled},
+	model.StateExporting:      {model.StateDone, model.StateFailed, model.StateCancelled},
 	model.StatePaused: {
 		model.StateParsing, model.StateOutlining, model.StateFacts,
 		model.StateGenerating, model.StateAuditing, model.StateExporting,
 		model.StateCancelled,
 	},
 	model.StateFailed:    {model.StateParsing, model.StateCancelled}, // can be resumed
-	model.StateDone:      {}, // terminal
-	model.StateCancelled: {}, // terminal
+	model.StateDone:      {},                                         // terminal
+	model.StateCancelled: {},                                         // terminal
 }
 
 // CanTransition reports whether `from → to` is a permitted transition.
@@ -94,6 +95,8 @@ func NextState(s model.State) (model.State, bool) {
 	case model.StateFacts:
 		return model.StateGenerating, true
 	case model.StateGenerating:
+		return model.StateAwaitingReview, true
+	case model.StateAwaitingReview:
 		return model.StateAuditing, true
 	case model.StateAuditing:
 		return model.StateExporting, true

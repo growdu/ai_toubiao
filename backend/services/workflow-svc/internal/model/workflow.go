@@ -11,17 +11,18 @@ import (
 type State string
 
 const (
-	StatePending    State = "pending"
-	StateParsing    State = "parsing"
-	StateOutlining  State = "outlining"
-	StateFacts      State = "facts"
-	StateGenerating State = "generating"
-	StateAuditing   State = "auditing"
-	StateExporting  State = "exporting"
-	StateDone       State = "done"
-	StateFailed     State = "failed"
-	StateCancelled  State = "cancelled"
-	StatePaused     State = "paused"
+	StatePending        State = "pending"
+	StateParsing        State = "parsing"
+	StateOutlining      State = "outlining"
+	StateFacts          State = "facts"
+	StateGenerating     State = "generating"
+	StateAwaitingReview State = "awaiting_review"
+	StateAuditing       State = "auditing"
+	StateExporting      State = "exporting"
+	StateDone           State = "done"
+	StateFailed         State = "failed"
+	StateCancelled      State = "cancelled"
+	StatePaused         State = "paused"
 )
 
 // IsTerminal reports whether the state is a terminal (no outgoing transitions).
@@ -106,7 +107,7 @@ type CreateRequest struct {
 
 // TransitionRequest triggers a state change.
 type TransitionRequest struct {
-	To     State  `json:"to"     validate:"required,oneof=parsing outlining facts generating auditing exporting done failed cancelled paused"`
+	To     State  `json:"to"     validate:"required,oneof=parsing outlining facts generating awaiting_review auditing exporting done failed cancelled paused"`
 	Reason string `json:"reason" validate:"omitempty,max=500"`
 }
 
@@ -119,14 +120,14 @@ type PauseRequest struct {
 // optional — when omitted, the workflow resumes to whatever state was
 // recorded by the matching Pause call (i.e. metadata.paused_from).
 type ResumeRequest struct {
-	To     State  `json:"to"     validate:"omitempty,oneof=parsing outlining facts generating auditing exporting"`
+	To     State  `json:"to"     validate:"omitempty,oneof=parsing outlining facts generating awaiting_review auditing exporting"`
 	Reason string `json:"reason" validate:"omitempty,max=500"`
 }
 
 // StepUpdateRequest updates progress on a step.
 type StepUpdateRequest struct {
-	Status     *StepStatus `json:"status"     validate:"omitempty,oneof=pending running succeeded failed skipped"`
-	Progress   *int        `json:"progress"   validate:"omitempty,between=0,100"`
-	Error      *string     `json:"error"      validate:"omitempty,max=2000"`
-	Artifacts  []byte      `json:"artifacts"  validate:"omitempty"`
+	Status    *StepStatus `json:"status"     validate:"omitempty,oneof=pending running succeeded failed skipped"`
+	Progress  *int        `json:"progress"   validate:"omitempty,between=0,100"`
+	Error     *string     `json:"error"      validate:"omitempty,max=2000"`
+	Artifacts []byte      `json:"artifacts"  validate:"omitempty"`
 }

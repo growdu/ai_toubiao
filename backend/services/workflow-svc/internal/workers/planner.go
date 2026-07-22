@@ -46,12 +46,31 @@ func (w *PlannerWorker) Process(ctx context.Context, task *asynq.Task) error {
 		slog.String("workflow_id", payload.WorkflowID.String()),
 		slog.String("bid_job_id", payload.BidJobID.String()))
 
-	// 1. Load parse_result from document-svc.
-	docClient := NewDocumentClient(w.cfg.DocumentURL)
-	parseResult, err := docClient.GetParseResult(ctx, payload.DocumentID)
-	if err != nil {
-		w.log.Warn("planner: failed to get parse result, using defaults", slog.Any("error", err))
-		parseResult = map[string]any{}
+	// 1. Load material + parsed result. Prefer the bid_job's parse_result
+	//    (written by the 4-step wizard parse endpoint) so the user's
+	//    edited material flows into outline generation; fall back to
+	//    document-svc for legacy flows that still carry a document_id.
+	parseResult := map[string]any{}
+	var bidParse []byte
+	_ = w.pool.QueryRow(ctx,
+		`SELECT parse_result FROM bid_jobs WHERE id = $1`, payload.BidJobID).Scan(&bidParse)
+	if len(bidParse) > 0 {
+		_ = json.Unmarshal(bidParse, &parseResult)
+	}
+	// Flatten parse_result.parsed (project_name, industry, ...) to top level
+	// so downstream code reading parseResult["project_name"] keeps working.
+	if parsed, ok := parseResult["parsed"].(map[string]any); ok {
+		for k, v := range parsed {
+			if _, exists := parseResult[k]; !exists {
+				parseResult[k] = v
+			}
+		}
+	}
+	if _, ok := parseResult["project_name"]; !ok && payload.DocumentID != uuid.Nil {
+		docClient := NewDocumentClient(w.cfg.DocumentURL)
+		if pr, err := docClient.GetParseResult(ctx, payload.DocumentID); err == nil {
+			parseResult = pr
+		}
 	}
 
 	// 2. Retrieve relevant evidence from knowledge base.

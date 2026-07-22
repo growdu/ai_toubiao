@@ -168,8 +168,8 @@ func TestProgressWatcher_CheckAndAdvance_AdvancesOnAllDone(t *testing.T) {
 	if !tr.called {
 		t.Fatal("transitioner should have been invoked")
 	}
-	if tr.gotFrom != model.StateGenerating || tr.gotTo != model.StateAuditing {
-		t.Errorf("expected generating->auditing, got %s->%s", tr.gotFrom, tr.gotTo)
+	if tr.gotFrom != model.StateGenerating || tr.gotTo != model.StateAwaitingReview {
+		t.Errorf("expected generating->awaiting_review, got %s->%s", tr.gotFrom, tr.gotTo)
 	}
 	if tr.gotVersion != 7 || tr.gotActor != actor {
 		t.Errorf("version/actor mismatch: v=%d actor=%s", tr.gotVersion, tr.gotActor)

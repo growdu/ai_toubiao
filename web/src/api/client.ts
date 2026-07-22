@@ -14,29 +14,51 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// In-flight refresh promise. Concurrent 401s share a single refresh
+// round-trip so we don't hammer /auth/refresh with N parallel calls.
+let refreshing: Promise<string> | null = null
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Wipe the stale token so the next /api/v1/* call doesn't keep
-      // shipping an Authorization header for an invalid session. The
-      // caller (typically LoginPage or an authenticated page) decides
-      // what to do: LoginPage will display its red banner, an
-      // authenticated page will end up at /login via ProtectedRoute
-      // when the next render checks `useAuthStore().token === null`.
-      //
-      // We deliberately do NOT `window.location.href = '/login'` here.
-      // That used to force a full page reload, which clobbered any
-      // local error state the LoginPage was about to display — so
-      // users saw the page "do nothing" after typing a wrong password.
-      const hadToken = !!useAuthStore.getState().token
+  async (error) => {
+    const status = error.response?.status
+    const original = error.config
+    // Only attempt a refresh on 401, for a retriable request, when we
+    // still hold a refresh token, and never for the refresh call itself.
+    if (
+      status === 401 &&
+      original &&
+      !original._retried &&
+      useAuthStore.getState().refreshToken &&
+      !String(original.url || '').includes('/auth/refresh')
+    ) {
+      original._retried = true
+      try {
+        if (!refreshing) {
+          const { refreshToken, setTokens } = useAuthStore.getState()
+          refreshing = (async () => {
+            const res = await axios.post('/api/v1/auth/refresh', {
+              refresh_token: refreshToken,
+            })
+            const next = res.data as { access_token: string; refresh_token: string }
+            setTokens(next.access_token, next.refresh_token)
+            return next.access_token
+          })().finally(() => {
+            refreshing = null
+          })
+        }
+        const newToken = await refreshing
+        original.headers.Authorization = `Bearer ${newToken}`
+        return api(original)
+      } catch (e) {
+        useAuthStore.getState().logout()
+        return Promise.reject(e)
+      }
+    }
+    // Any other 401 (no refresh token, refresh failed, already retried)
+    // clears the stale session; the route guard redirects to /login.
+    if (status === 401) {
       useAuthStore.getState().logout()
-      // Only the navigation-relevant paths should redirect to /login;
-      // for now we let the route guard do it on the next render.
-      // (If you ever wire a global toast, this is the place to call it
-      //  when hadToken is true — i.e. a previously-authenticated user
-      //  got a 401 from a protected endpoint.)
-      void hadToken
     }
     return Promise.reject(error)
   }
