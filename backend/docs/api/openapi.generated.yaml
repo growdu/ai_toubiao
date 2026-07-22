@@ -1,0 +1,2494 @@
+openapi: 3.0.3
+info:
+  title: BidWriter Backend API
+  version: 1.0.0
+  description: |
+    HTTP API 真相源。By `scripts/gen-api.py` 自动生成，依据各服务的 `internal/api/*.go`
+    与 api-gateway 主入口的路由注册。
+
+    ⚠️ 此规范目前仅包含 method / path / handler 三元组；请求 / 响应 schema 是占位符，
+    在每个 service 接上 swag 注释之前请不要直接用于 SDK 生成。
+
+    完整覆盖范围：
+    - 10 个业务微服务
+    - api-gateway 自管的 3 个 auth 端点
+    - 共 73 个 public 路由
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: 本地开发（api-gateway）
+  - url: https://api.bidwriter.app/api/v1
+    description: 生产（占位）
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+    description: 认证（api-gateway 本地处理）
+  - name: project
+    description: 项目 / 标段 CRUD（project-svc）
+  - name: document
+    description: 招标与素材文档的上传 / 解析 / Markdown 化（document-svc）
+  - name: workflow
+    description: Step01-05 工作流编排、状态机、章节生成与导出（workflow-svc）
+  - name: knowledge
+    description: 知识库素材、pgvector 检索、chunk 管理（knowledge-svc）
+  - name: audit
+    description: 四层一致性审计 + agent 自动修复（audit-svc）
+  - name: template
+    description: 行业模板 / 模板市集（template-svc）
+  - name: billing
+    description: 订阅、Token 用量、硬限保护（billing-svc）
+  - name: notify
+    description: 邮件 / Webhook / IM 推送与用户偏好（notify-svc）
+  - name: router
+    description: 多模型路由、缓存、用量统计（router-svc）
+  - name: docgen
+    description: 独立 docx / pdf 导出引擎（doc-gen）
+
+paths:
+  /api/v1/auth/login:
+    post:
+      summary: "login Handler"
+      operationId: api_gateway_post_api_v1_auth_login
+      tags:
+        - api-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security: []
+      x-handler: api-gateway.loginHandler
+      x-source: cmd/api-gateway/main.go:85
+      x-stub: needs-swag-annotation
+  /api/v1/auth/refresh:
+    post:
+      summary: "refresh Handler"
+      operationId: api_gateway_post_api_v1_auth_refresh
+      tags:
+        - api-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security: []
+      x-handler: api-gateway.refreshHandler
+      x-source: cmd/api-gateway/main.go:87
+      x-stub: needs-swag-annotation
+  /api/v1/auth/register:
+    post:
+      summary: "register Handler"
+      operationId: api_gateway_post_api_v1_auth_register
+      tags:
+        - api-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security: []
+      x-handler: api-gateway.registerHandler
+      x-source: cmd/api-gateway/main.go:86
+      x-stub: needs-swag-annotation
+  /api/v1/audit/bidjobs/{id}/report:
+    get:
+      summary: "get Report"
+      operationId: audit_svc_get_api_v1_audit_bidjobs_id_report
+      tags:
+        - audit
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: audit-svc.h.getReport
+      x-source: internal/api/handlers.go:69
+      x-stub: needs-swag-annotation
+    post:
+      summary: "trigger Report"
+      operationId: audit_svc_post_api_v1_audit_bidjobs_id_report
+      tags:
+        - audit
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: audit-svc.h.triggerReport
+      x-source: internal/api/handlers.go:68
+      x-stub: needs-swag-annotation
+  /api/v1/audit/bidjobs/{id}/resolve:
+    post:
+      summary: "resolve Issue"
+      operationId: audit_svc_post_api_v1_audit_bidjobs_id_resolve
+      tags:
+        - audit
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: audit-svc.h.resolveIssue
+      x-source: internal/api/handlers.go:70
+      x-stub: needs-swag-annotation
+  /api/v1/bids:
+    get:
+      summary: "list"
+      operationId: workflow_svc_get_api_v1_bids
+      tags:
+        - workflow
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.list
+      x-source: internal/api/handlers.go:57
+      x-stub: needs-swag-annotation
+    post:
+      summary: "create"
+      operationId: workflow_svc_post_api_v1_bids
+      tags:
+        - workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.create
+      x-source: internal/api/handlers.go:56
+      x-stub: needs-swag-annotation
+  /api/v1/bids/chapters/{chapterId}:
+    put:
+      summary: "update Chapter"
+      operationId: workflow_svc_put_api_v1_bids_chapters_chapterid
+      tags:
+        - workflow
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `chapterId`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.updateChapter
+      x-source: internal/api/chapter_handlers.go:62
+      x-stub: needs-swag-annotation
+    delete:
+      summary: "delete Chapter"
+      operationId: workflow_svc_delete_api_v1_bids_chapters_chapterid
+      tags:
+        - workflow
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `chapterId`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.deleteChapter
+      x-source: internal/api/chapter_handlers.go:63
+      x-stub: needs-swag-annotation
+  /api/v1/bids/chapters/{chapterId}/content:
+    get:
+      summary: "get Chapter Content"
+      operationId: workflow_svc_get_api_v1_bids_chapters_chapterid_content
+      tags:
+        - workflow
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `chapterId`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.getChapterContent
+      x-source: internal/api/chapter_handlers.go:64
+      x-stub: needs-swag-annotation
+    put:
+      summary: "save Chapter Content"
+      operationId: workflow_svc_put_api_v1_bids_chapters_chapterid_content
+      tags:
+        - workflow
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `chapterId`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.saveChapterContent
+      x-source: internal/api/chapter_handlers.go:65
+      x-stub: needs-swag-annotation
+  /api/v1/bids/chapters/{chapterId}/generate:
+    post:
+      summary: "generate Chapter"
+      operationId: workflow_svc_post_api_v1_bids_chapters_chapterid_generate
+      tags:
+        - workflow
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `chapterId`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.generateChapter
+      x-source: internal/api/chapter_handlers.go:66
+      x-stub: needs-swag-annotation
+  /api/v1/bids/material:
+    put:
+      summary: "save Material"
+      operationId: workflow_svc_put_api_v1_bids_material
+      tags:
+        - workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.saveMaterial
+      x-source: internal/api/chapter_handlers.go:60
+      x-stub: needs-swag-annotation
+  /api/v1/bids/outline:
+    get:
+      summary: "list Outline"
+      operationId: workflow_svc_get_api_v1_bids_outline
+      tags:
+        - workflow
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.listOutline
+      x-source: internal/api/chapter_handlers.go:58
+      x-stub: needs-swag-annotation
+    post:
+      summary: "add Chapter"
+      operationId: workflow_svc_post_api_v1_bids_outline
+      tags:
+        - workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.addChapter
+      x-source: internal/api/chapter_handlers.go:59
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}:
+    get:
+      summary: "get"
+      operationId: workflow_svc_get_api_v1_bids_id
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.get
+      x-source: internal/api/handlers.go:59
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/events:
+    get:
+      summary: "list Events"
+      operationId: workflow_svc_get_api_v1_bids_id_events
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.listEvents
+      x-source: internal/api/handlers.go:62
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/export:
+    post:
+      summary: "export Document Handler"
+      operationId: workflow_svc_post_api_v1_bids_id_export
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.exportDocumentHandler
+      x-source: internal/api/handlers.go:69
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/export/pdf:
+    get:
+      summary: "export PDFHandler"
+      operationId: workflow_svc_get_api_v1_bids_id_export_pdf
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.exportPDFHandler
+      x-source: internal/api/handlers.go:68
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/export/word:
+    get:
+      summary: "export Word Handler"
+      operationId: workflow_svc_get_api_v1_bids_id_export_word
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.exportWordHandler
+      x-source: internal/api/handlers.go:67
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/pause:
+    post:
+      summary: "pause"
+      operationId: workflow_svc_post_api_v1_bids_id_pause
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.pause
+      x-source: internal/api/handlers.go:64
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/resume:
+    post:
+      summary: "resume"
+      operationId: workflow_svc_post_api_v1_bids_id_resume
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.resume
+      x-source: internal/api/handlers.go:65
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/steps:
+    get:
+      summary: "list Steps"
+      operationId: workflow_svc_get_api_v1_bids_id_steps
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.listSteps
+      x-source: internal/api/handlers.go:61
+      x-stub: needs-swag-annotation
+  /api/v1/bids/{id}/transition:
+    post:
+      summary: "transition"
+      operationId: workflow_svc_post_api_v1_bids_id_transition
+      tags:
+        - workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: workflow-svc.h.transition
+      x-source: internal/api/handlers.go:60
+      x-stub: needs-swag-annotation
+  /api/v1/billing/budget:
+    post:
+      summary: "set Budget"
+      operationId: billing_svc_post_api_v1_billing_budget
+      tags:
+        - billing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: billing-svc.h.setBudget
+      x-source: internal/api/handlers.go:51
+      x-stub: needs-swag-annotation
+  /api/v1/billing/budget/current:
+    get:
+      summary: "get Current Budget"
+      operationId: billing_svc_get_api_v1_billing_budget_current
+      tags:
+        - billing
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: billing-svc.h.getCurrentBudget
+      x-source: internal/api/handlers.go:50
+      x-stub: needs-swag-annotation
+  /api/v1/billing/checkout:
+    post:
+      summary: "checkout"
+      operationId: billing_svc_post_api_v1_billing_checkout
+      tags:
+        - billing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: billing-svc.h.checkout
+      x-source: internal/api/handlers.go:54
+      x-stub: needs-swag-annotation
+  /api/v1/billing/plan:
+    get:
+      summary: "get Current Plan"
+      operationId: billing_svc_get_api_v1_billing_plan
+      tags:
+        - billing
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: billing-svc.h.getCurrentPlan
+      x-source: internal/api/handlers.go:55
+      x-stub: needs-swag-annotation
+  /api/v1/billing/transactions:
+    get:
+      summary: "get Transactions"
+      operationId: billing_svc_get_api_v1_billing_transactions
+      tags:
+        - billing
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: billing-svc.h.getTransactions
+      x-source: internal/api/handlers.go:53
+      x-stub: needs-swag-annotation
+    post:
+      summary: "add Transaction"
+      operationId: billing_svc_post_api_v1_billing_transactions
+      tags:
+        - billing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: billing-svc.h.addTransaction
+      x-source: internal/api/handlers.go:52
+      x-stub: needs-swag-annotation
+  /api/v1/documents:
+    get:
+      summary: "list"
+      operationId: document_svc_get_api_v1_documents
+      tags:
+        - document
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.list
+      x-source: internal/api/handlers.go:69
+      x-stub: needs-swag-annotation
+    post:
+      summary: "upload"
+      operationId: document_svc_post_api_v1_documents
+      tags:
+        - document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.upload
+      x-source: internal/api/handlers.go:70
+      x-stub: needs-swag-annotation
+  /api/v1/documents/document:
+    post:
+      summary: "export Document"
+      operationId: document_svc_post_api_v1_documents_document
+      tags:
+        - document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.exportDocument
+      x-source: internal/api/handlers.go:83
+      x-stub: needs-swag-annotation
+  /api/v1/documents/json:
+    post:
+      summary: "create JSON"
+      operationId: document_svc_post_api_v1_documents_json
+      tags:
+        - document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.createJSON
+      x-source: internal/api/handlers.go:71
+      x-stub: needs-swag-annotation
+  /api/v1/documents/{id}:
+    get:
+      summary: "get"
+      operationId: document_svc_get_api_v1_documents_id
+      tags:
+        - document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.get
+      x-source: internal/api/handlers.go:72
+      x-stub: needs-swag-annotation
+    patch:
+      summary: "update"
+      operationId: document_svc_patch_api_v1_documents_id
+      tags:
+        - document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.update
+      x-source: internal/api/handlers.go:73
+      x-stub: needs-swag-annotation
+    delete:
+      summary: "delete"
+      operationId: document_svc_delete_api_v1_documents_id
+      tags:
+        - document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.delete
+      x-source: internal/api/handlers.go:74
+      x-stub: needs-swag-annotation
+  /api/v1/documents/{id}/content:
+    get:
+      summary: "download"
+      operationId: document_svc_get_api_v1_documents_id_content
+      tags:
+        - document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.download
+      x-source: internal/api/handlers.go:75
+      x-stub: needs-swag-annotation
+  /api/v1/documents/{id}/parse:
+    post:
+      summary: "parse"
+      operationId: document_svc_post_api_v1_documents_id_parse
+      tags:
+        - document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.parse
+      x-source: internal/api/handlers.go:77
+      x-stub: needs-swag-annotation
+  /api/v1/documents/{id}/parse-result:
+    get:
+      summary: "get Parse Result"
+      operationId: document_svc_get_api_v1_documents_id_parse_result
+      tags:
+        - document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: document-svc.h.getParseResult
+      x-source: internal/api/handlers.go:78
+      x-stub: needs-swag-annotation
+  /api/v1/kb/ingest:
+    post:
+      summary: "ingest"
+      operationId: knowledge_svc_post_api_v1_kb_ingest
+      tags:
+        - knowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: knowledge-svc.h.ingest
+      x-source: internal/api/handlers.go:62
+      x-stub: needs-swag-annotation
+  /api/v1/kb/materials:
+    get:
+      summary: "list Materials"
+      operationId: knowledge_svc_get_api_v1_kb_materials
+      tags:
+        - knowledge
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: knowledge-svc.h.listMaterials
+      x-source: internal/api/handlers.go:54
+      x-stub: needs-swag-annotation
+    post:
+      summary: "create Material"
+      operationId: knowledge_svc_post_api_v1_kb_materials
+      tags:
+        - knowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: knowledge-svc.h.createMaterial
+      x-source: internal/api/handlers.go:53
+      x-stub: needs-swag-annotation
+  /api/v1/kb/materials/{id}:
+    get:
+      summary: "get Material"
+      operationId: knowledge_svc_get_api_v1_kb_materials_id
+      tags:
+        - knowledge
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: knowledge-svc.h.getMaterial
+      x-source: internal/api/handlers.go:55
+      x-stub: needs-swag-annotation
+    delete:
+      summary: "delete Material"
+      operationId: knowledge_svc_delete_api_v1_kb_materials_id
+      tags:
+        - knowledge
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: knowledge-svc.h.deleteMaterial
+      x-source: internal/api/handlers.go:56
+      x-stub: needs-swag-annotation
+  /api/v1/kb/search:
+    post:
+      summary: "search"
+      operationId: knowledge_svc_post_api_v1_kb_search
+      tags:
+        - knowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: knowledge-svc.h.search
+      x-source: internal/api/handlers.go:59
+      x-stub: needs-swag-annotation
+  /api/v1/notifications/preferences:
+    get:
+      summary: "list Preferences"
+      operationId: notify_svc_get_api_v1_notifications_preferences
+      tags:
+        - notify
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: notify-svc.h.listPreferences
+      x-source: internal/api/handlers.go:48
+      x-stub: needs-swag-annotation
+    post:
+      summary: "create Preference"
+      operationId: notify_svc_post_api_v1_notifications_preferences
+      tags:
+        - notify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: notify-svc.h.createPreference
+      x-source: internal/api/handlers.go:49
+      x-stub: needs-swag-annotation
+  /api/v1/notifications/preferences/{id}:
+    patch:
+      summary: "update Preference"
+      operationId: notify_svc_patch_api_v1_notifications_preferences_id
+      tags:
+        - notify
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: notify-svc.h.updatePreference
+      x-source: internal/api/handlers.go:50
+      x-stub: needs-swag-annotation
+    delete:
+      summary: "delete Preference"
+      operationId: notify_svc_delete_api_v1_notifications_preferences_id
+      tags:
+        - notify
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: notify-svc.h.deletePreference
+      x-source: internal/api/handlers.go:51
+      x-stub: needs-swag-annotation
+  /api/v1/notifications/send:
+    post:
+      summary: "send"
+      operationId: notify_svc_post_api_v1_notifications_send
+      tags:
+        - notify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: notify-svc.h.send
+      x-source: internal/api/handlers.go:47
+      x-stub: needs-swag-annotation
+  /api/v1/projects:
+    get:
+      summary: "list"
+      operationId: project_svc_get_api_v1_projects
+      tags:
+        - project
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: project-svc.h.list
+      x-source: internal/api/handlers.go:60
+      x-stub: needs-swag-annotation
+    post:
+      summary: "create"
+      operationId: project_svc_post_api_v1_projects
+      tags:
+        - project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: project-svc.h.create
+      x-source: internal/api/handlers.go:61
+      x-stub: needs-swag-annotation
+  /api/v1/projects/{id}:
+    get:
+      summary: "get"
+      operationId: project_svc_get_api_v1_projects_id
+      tags:
+        - project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: project-svc.h.get
+      x-source: internal/api/handlers.go:62
+      x-stub: needs-swag-annotation
+    patch:
+      summary: "update"
+      operationId: project_svc_patch_api_v1_projects_id
+      tags:
+        - project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: project-svc.h.update
+      x-source: internal/api/handlers.go:63
+      x-stub: needs-swag-annotation
+    delete:
+      summary: "delete"
+      operationId: project_svc_delete_api_v1_projects_id
+      tags:
+        - project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: project-svc.h.delete
+      x-source: internal/api/handlers.go:64
+      x-stub: needs-swag-annotation
+  /api/v1/router/budget:
+    get:
+      summary: "Get Budget"
+      operationId: router_svc_get_api_v1_router_budget
+      tags:
+        - router
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.GetBudget
+      x-source: internal/api/handlers.go:47
+      x-stub: needs-swag-annotation
+    put:
+      summary: "Set Budget"
+      operationId: router_svc_put_api_v1_router_budget
+      tags:
+        - router
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.SetBudget
+      x-source: internal/api/handlers.go:48
+      x-stub: needs-swag-annotation
+  /api/v1/router/cache/clear:
+    post:
+      summary: "Cache Clear"
+      operationId: router_svc_post_api_v1_router_cache_clear
+      tags:
+        - router
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.CacheClear
+      x-source: internal/api/handlers.go:50
+      x-stub: needs-swag-annotation
+  /api/v1/router/cache/stats:
+    get:
+      summary: "Cache Stats"
+      operationId: router_svc_get_api_v1_router_cache_stats
+      tags:
+        - router
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.CacheStats
+      x-source: internal/api/handlers.go:49
+      x-stub: needs-swag-annotation
+  /api/v1/router/calls:
+    get:
+      summary: "List Calls"
+      operationId: router_svc_get_api_v1_router_calls
+      tags:
+        - router
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.ListCalls
+      x-source: internal/api/handlers.go:44
+      x-stub: needs-swag-annotation
+  /api/v1/router/chat:
+    post:
+      summary: "Chat"
+      operationId: router_svc_post_api_v1_router_chat
+      tags:
+        - router
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.Chat
+      x-source: internal/api/handlers.go:41
+      x-stub: needs-swag-annotation
+  /api/v1/router/embed:
+    post:
+      summary: "Embed"
+      operationId: router_svc_post_api_v1_router_embed
+      tags:
+        - router
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.Embed
+      x-source: internal/api/handlers.go:42
+      x-stub: needs-swag-annotation
+  /api/v1/router/health:
+    get:
+      summary: "Provider Health"
+      operationId: router_svc_get_api_v1_router_health
+      tags:
+        - router
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.ProviderHealth
+      x-source: internal/api/handlers.go:46
+      x-stub: needs-swag-annotation
+  /api/v1/router/routes:
+    get:
+      summary: "List Routes"
+      operationId: router_svc_get_api_v1_router_routes
+      tags:
+        - router
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.ListRoutes
+      x-source: internal/api/handlers.go:43
+      x-stub: needs-swag-annotation
+  /api/v1/router/stats:
+    get:
+      summary: "Stats"
+      operationId: router_svc_get_api_v1_router_stats
+      tags:
+        - router
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: router-svc.h.Stats
+      x-source: internal/api/handlers.go:45
+      x-stub: needs-swag-annotation
+  /api/v1/templates:
+    get:
+      summary: "list"
+      operationId: template_svc_get_api_v1_templates
+      tags:
+        - template
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: template-svc.h.list
+      x-source: internal/api/handlers.go:52
+      x-stub: needs-swag-annotation
+    post:
+      summary: "upload"
+      operationId: template_svc_post_api_v1_templates
+      tags:
+        - template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: template-svc.h.upload
+      x-source: internal/api/handlers.go:53
+      x-stub: needs-swag-annotation
+  /api/v1/templates/{id}:
+    get:
+      summary: "get"
+      operationId: template_svc_get_api_v1_templates_id
+      tags:
+        - template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: template-svc.h.get
+      x-source: internal/api/handlers.go:54
+      x-stub: needs-swag-annotation
+    patch:
+      summary: "update"
+      operationId: template_svc_patch_api_v1_templates_id
+      tags:
+        - template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRequest'
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: template-svc.h.update
+      x-source: internal/api/handlers.go:55
+      x-stub: needs-swag-annotation
+    delete:
+      summary: "delete"
+      operationId: template_svc_delete_api_v1_templates_id
+      tags:
+        - template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: template-svc.h.delete
+      x-source: internal/api/handlers.go:56
+      x-stub: needs-swag-annotation
+  /api/v1/templates/{id}/download:
+    get:
+      summary: "download"
+      operationId: template_svc_get_api_v1_templates_id_download
+      tags:
+        - template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "Path parameter `id`."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OKEnvelope'
+        '400':
+          $ref: #/components/responses/BadRequest
+        '401':
+          $ref: #/components/responses/Unauthorized
+        '404':
+          $ref: #/components/responses/NotFound
+        '500':
+          $ref: #/components/responses/Internal
+      security:
+        - bearerAuth: []
+      x-handler: template-svc.h.download
+      x-source: internal/api/handlers.go:57
+      x-stub: needs-swag-annotation
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        `Authorization: Bearer <jwt>`。
+        JWT 由 `POST /api/v1/auth/login` 签发；access TTL 默认 1h，refresh TTL 默认 30d。
+        详见 docs/api/authentication.md。
+
+  responses:
+    BadRequest:
+      description: 请求参数非法
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: 未认证 / Token 无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Internal:
+      description: 服务内部错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    OKEnvelope:
+      type: object
+      description: 通用成功响应外壳；具体业务字段见各服务。
+      properties:
+        code:
+          type: string
+          example: ok
+        data:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+          format: uuid
+
+    Error:
+      type: object
+      description: 统一错误响应。错误码见 docs/api/errors.md。
+      properties:
+        code:
+          type: string
+          description: 业务错误码（machine-readable）
+          example: invalid_input
+        message:
+          type: string
+          description: 面向开发者的错误描述
+        request_id:
+          type: string
+          format: uuid
+        details:
+          type: object
+          additionalProperties: true
+
+    GenericRequest:
+      type: object
+      description: 占位请求体。实际 schema 待 swag 注释补齐后替换。
+      additionalProperties: true
